@@ -273,7 +273,7 @@ struct SpeakerCarryOverTests {
                             language: "en-US", engine: "apple", micMode: .solo)
         old.speakers = [
             Speaker(id: "me", name: "Me", colorIndex: 0, isMe: true, isConfirmed: true),
-            Speaker(id: "system:0", name: "Jamie", colorIndex: 1, isConfirmed: true),
+            Speaker(id: "system:0", name: "Alex", colorIndex: 1, isConfirmed: true),
         ]
         old.segments = [
             Segment(channel: .system, speakerID: "system:0", start: 0, end: 5, text: "Short one.", isFinal: true),
@@ -292,8 +292,8 @@ struct SpeakerCarryOverTests {
         let carried = SpeakerCarryOver.apply(from: old, to: new)
         #expect(carried.speakers.filter { !$0.isMe }.count == 3)
         #expect(carried.segments.map(\.speakerID) == ["system:rS1", "system:0", "system:rS3"])
-        #expect(carried.speaker("system:0")?.name == "Jamie")
-        #expect(carried.speakers.filter { $0.name == "Jamie" }.count == 1)
+        #expect(carried.speaker("system:0")?.name == "Alex")
+        #expect(carried.speakers.filter { $0.name == "Alex" }.count == 1)
     }
 
     /// Refining twice: the first refine left "system:rS1" (you) and
