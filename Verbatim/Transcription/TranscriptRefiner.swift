@@ -30,6 +30,7 @@ enum TranscriptRefiner {
         myName: String,
         terms: [String],
         retranscribe: Bool,
+        myVoice: [[Float]] = [],
         progress: @escaping (String) -> Void
     ) async throws -> Recording {
         let offsets = original.channelOffsets ?? [:]
@@ -70,6 +71,7 @@ enum TranscriptRefiner {
         // whether it heard just you (online) or a room (in person / hybrid).
         let systemSpeech = results.filter { $0.0 == .system }.reduce(0) { $0 + max(0, $1.1.end - $1.1.start) }
         var diarization: [AudioChannel: [DiarizedSpan]] = [:]
+        var voices: [AudioChannel: [String: [Float]]] = [:]
         for channel in AudioChannel.allCases {
             let url = store.audioURL(for: original.id, channel: channel)
             let seconds = audioSeconds(url)
@@ -81,16 +83,35 @@ enum TranscriptRefiner {
             let maxSpeakers = expected > 0 ? expected : nil
             let offset = offsets[channel.rawValue] ?? 0
             do {
-                let spans = try await withTimeout(max(120, min(seconds * 0.3, 600))) {
-                    try await OfflineDiarization.run(url: url, maxSpeakers: maxSpeakers)
+                let run = try await withTimeout(max(120, min(seconds * 0.3, 600))) {
+                    try await OfflineDiarization.runWithVoices(url: url, maxSpeakers: maxSpeakers)
                 }
-                diarization[channel] = spans.map { DiarizedSpan(speaker: $0.speaker, start: $0.start + offset, end: $0.end + offset) }
+                diarization[channel] = run.spans.map { DiarizedSpan(speaker: $0.speaker, start: $0.start + offset, end: $0.end + offset) }
+                voices[channel] = run.voices
             } catch {
                 Log.asr.error("Speaker separation on \(channel.rawValue) failed: \(error.localizedDescription)")
             }
         }
         let systemIntervals = results.filter { $0.0 == .system }.map { ($0.1.start, $0.1.end) }
-        let micIsRoom = micHoldsSeveralVoices(diarization[.mic] ?? [], systemSpeech: systemSpeech, systemIntervals: systemIntervals)
+        // A mic voice the call audio carries too is nobody else in the room:
+        // it is a remote voice leaking into the mic, or the room's own audio
+        // coming back through the call (a meeting-room system in the same
+        // Meet). Counting those turned a two-person room into five speakers.
+        let micVoices = voices[.mic] ?? [:], callVoices = voices[.system] ?? [:]
+        let micAlsoOnCall = OfflineDiarization.sharedVoices(micVoices, callVoices)
+        let micIsRoom = micHoldsSeveralVoices((diarization[.mic] ?? []).filter { !micAlsoOnCall.contains($0.speaker) },
+                                              systemSpeech: systemSpeech, systemIntervals: systemIntervals)
+        // Your own voice on the call audio (heard on your mic too, and
+        // matching your voiceprint) means the call carries the room: those
+        // call lines are yours, and the mic's copy of them is a duplicate.
+        let meOnCall: Set<String> = micIsRoom ? [] : OfflineDiarization.sharedVoices(callVoices, micVoices).filter { id in
+            callVoices[id].map { voice in myVoice.contains { VoiceEmbedding.cosine(voice, $0) >= VoiceprintStore.autoThreshold } } ?? false
+        }
+        let callSpeech = systemIntervals.map { ($0.0 - 1, $0.1 + 1) }
+        func duringCallSpeech(_ start: Double, _ end: Double) -> Bool {
+            let mid = (start + end) / 2
+            return callSpeech.contains { mid >= $0.0 && mid <= $0.1 }
+        }
 
         // Rebuild with the same turn-merging and echo rules as live.
         func build(_ input: [(AudioChannel, EngineResult)]) -> Recording {
@@ -105,10 +126,14 @@ enum TranscriptRefiner {
             // Drop loudspeaker leak from the mic word by word (laptop speakers,
             // no headphones), so the user's own words in a mixed result survive.
             let systemWords = results.filter { $0.0 == .system }.flatMap(\.1.words)
-            if !systemWords.isEmpty {
+            if !meOnCall.isEmpty {
+                results = results.filter { $0.0 != .mic || !$0.1.words.isEmpty || !duringCallSpeech($0.1.start, $0.1.end) }
+            }
+            if !systemWords.isEmpty || !meOnCall.isEmpty {
                 results = results.compactMap { channel, result in
                     guard channel == .mic, !result.words.isEmpty else { return (channel, result) }
-                    let kept = EchoFilter.removeLeakedWords(result.words, system: systemWords)
+                    var kept = EchoFilter.removeLeakedWords(result.words, system: systemWords)
+                    if !meOnCall.isEmpty { kept = kept.filter { !duringCallSpeech($0.start, $0.end) } }
                     guard !kept.isEmpty else { return nil }
                     var r = result
                     r.words = kept
@@ -131,7 +156,14 @@ enum TranscriptRefiner {
                 }
                 builder.apply(EngineUpdate(finals: [labeled]), channel: channel)
             }
-            return builder.recording
+            var rec = builder.recording
+            for id in meOnCall.sorted() {
+                rec = rec.merging(builder.speakerKey(.system, label: id), into: Speaker.meID)
+            }
+            if !meOnCall.isEmpty, rec.speaker(Speaker.meID) == nil {
+                rec.speakers.insert(Speaker(id: Speaker.meID, name: myName, colorIndex: 0, isMe: true, isConfirmed: true), at: 0)
+            }
+            return rec
         }
         var refined = build(results)
 
@@ -303,14 +335,32 @@ nonisolated enum FileTranscription {
 
 nonisolated enum OfflineDiarization {
     static func run(url: URL, maxSpeakers: Int?) async throws -> [DiarizedSpan] {
+        try await runWithVoices(url: url, maxSpeakers: maxSpeakers).spans
+    }
+
+    /// Spans plus one unit-length voice per speaker, in the same WeSpeaker
+    /// space as voiceprints, so voices can be compared across channels.
+    static func runWithVoices(url: URL, maxSpeakers: Int?) async throws -> (spans: [DiarizedSpan], voices: [String: [Float]]) {
         var config = OfflineDiarizerConfig()
         if let maxSpeakers { config.clustering.maxSpeakers = maxSpeakers }
         let manager = OfflineDiarizerManager(config: config)
         try await manager.prepareModels()
         let result = try await manager.process(url)
-        return result.segments.map {
+        let spans = result.segments.map {
             DiarizedSpan(speaker: $0.speakerId, start: Double($0.startTimeSeconds), end: Double($0.endTimeSeconds))
         }
+        let voices = (result.speakerDatabase ?? [:]).compactMapValues { v -> [Float]? in
+            let norm = sqrt(v.reduce(0) { $0 + $1 * $1 })
+            return norm > 0 ? v.map { $0 / norm } : nil
+        }
+        return (spans, voices)
+    }
+
+    /// Speakers in `voices` that are also in `others`: the same person by the
+    /// voiceprint threshold. Across channels the same voice scored 0.77 to
+    /// 0.95 on a real meeting; different people stayed under 0.47.
+    static func sharedVoices(_ voices: [String: [Float]], _ others: [String: [Float]]) -> Set<String> {
+        Set(voices.filter { _, v in others.values.contains { VoiceEmbedding.cosine(v, $0) >= VoiceprintStore.autoThreshold } }.keys)
     }
 
     /// Speaker with the largest overlap, else the nearest span. Words the
@@ -365,11 +415,25 @@ nonisolated enum SpeakerCarryOver {
             mapping[c.new] = c.old
         }
 
-        // Rewrite segment speaker IDs; unmapped speakers get IDs that can't
-        // collide with the old ones.
+        // Rewrite segment speaker IDs; unmapped speakers get IDs that no old
+        // speaker has, even after several refines (a second refine used to
+        // hand "system:rS2" the name of the previous refine's "system:rS2").
         var finalIDs: [String: String] = [:]
+        var taken = Set(old.speakers.map(\.id))
         for speaker in new.speakers where !speaker.isMe {
-            finalIDs[speaker.id] = mapping[speaker.id] ?? speaker.id.replacingOccurrences(of: ":", with: ":r")
+            if let mapped = mapping[speaker.id] {
+                finalIDs[speaker.id] = mapped
+                continue
+            }
+            let base = speaker.id.replacingOccurrences(of: ":", with: ":r")
+            var id = base
+            var n = 2
+            while taken.contains(id) {
+                id = "\(base)-\(n)"
+                n += 1
+            }
+            taken.insert(id)
+            finalIDs[speaker.id] = id
         }
         for i in result.segments.indices {
             if let id = finalIDs[result.segments[i].speakerID] { result.segments[i].speakerID = id }
@@ -417,6 +481,22 @@ nonisolated enum SpeakerCarryOver {
             }
         }
         return out
+    }
+}
+
+extension Recording {
+    /// Every line of `from` moved onto `into`, and `from` removed; neighbouring
+    /// lines that now share a speaker are joined.
+    nonisolated func merging(_ from: String, into: String) -> Recording {
+        guard from != into else { return self }
+        var rec = self
+        for i in rec.segments.indices where rec.segments[i].speakerID == from {
+            rec.segments[i].speakerID = into
+        }
+        rec.speakers.removeAll { $0.id == from }
+        rec.speakerSources?[from] = nil
+        rec.segments = SpeakerCarryOver.mergeAdjacent(rec.segments)
+        return rec
     }
 }
 

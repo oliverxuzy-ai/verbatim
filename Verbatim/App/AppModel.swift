@@ -206,12 +206,7 @@ final class AppModel {
     /// Move every segment of `from` onto `into` (fixes diarizer splits).
     func mergeSpeaker(recordingID: UUID, from: String, into: String) {
         guard from != into else { return }
-        mutate(recordingID) { rec in
-            for i in rec.segments.indices where rec.segments[i].speakerID == from {
-                rec.segments[i].speakerID = into
-            }
-            rec.speakers.removeAll { $0.id == from }
-        }
+        mutate(recordingID) { rec in rec = rec.merging(from, into: into) }
     }
 
     func reassignSegment(recordingID: UUID, segmentID: UUID, to speakerID: String) {
@@ -268,7 +263,8 @@ final class AppModel {
         do {
             var refined = try await TranscriptRefiner.refine(
                 original, store: store, myName: settings.myName, terms: terms,
-                retranscribe: original.engine == EngineKind.apple.rawValue
+                retranscribe: original.engine == EngineKind.apple.rawValue,
+                myVoice: voiceprints.voiceprints.first { $0.id == VoiceprintStore.meID && $0.backend == VoiceEmbedding.backend.rawValue }?.embeddings ?? []
             ) { [weak self] message in
                 Task { @MainActor in self?.refineStates[id] = .running(message) }
             }
