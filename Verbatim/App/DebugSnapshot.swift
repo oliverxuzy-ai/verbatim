@@ -118,10 +118,18 @@ enum DebugSnapshot {
         return window
     }
 
-    private static func save(_ window: NSWindow, to url: URL) {
-        guard let view = window.contentView?.superview ?? window.contentView,
-              let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
-        view.cacheDisplay(in: view.bounds, to: rep)
+    /// Renders at 2x (Retina) whatever the screen, so the PNGs stay sharp
+    /// even when taken on a non-Retina build machine.
+    private static func save(_ window: NSWindow, to url: URL, scale: CGFloat = 2) {
+        guard let view = window.contentView?.superview ?? window.contentView else { return }
+        let bounds = view.bounds
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: Int(bounds.width * scale), pixelsHigh: Int(bounds.height * scale),
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+        ) else { return }
+        rep.size = bounds.size
+        view.cacheDisplay(in: bounds, to: rep)
         try? rep.representation(using: .png, properties: [:])?.write(to: url)
     }
 
