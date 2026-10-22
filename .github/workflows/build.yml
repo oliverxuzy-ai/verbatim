@@ -1,0 +1,71 @@
+# Builds, tests and packages Verbatim on a GitHub-hosted Mac, so a change can
+# be checked without a local Xcode. Every pull request gets a DMG artifact to
+# try. Running it by hand on main ("Run workflow") also tags the version in
+# project.yml and publishes the GitHub release with release-notes/<version>.md.
+name: Build
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  HOMEBREW_NO_AUTO_UPDATE: 1
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      # A fresh Mac asks before running Swift package plugins and macros;
+      # nobody is there to click, so trust them up front.
+      - name: Trust package plugins and macros
+        run: |
+          defaults write com.apple.dt.Xcode IDESkipPackagePluginFingerprintValidatation -bool YES
+          defaults write com.apple.dt.Xcode IDESkipMacroFingerprintValidation -bool YES
+          xcodebuild -version
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Test
+        run: >
+          xcodebuild test -project Verbatim.xcodeproj -scheme Verbatim
+          -destination 'platform=macOS'
+          -derivedDataPath "$HOME/Library/Developer/VerbatimDerivedData"
+
+      - name: Package DMG
+        id: package
+        run: |
+          dmg=$(scripts/package.sh | tail -n 1)
+          echo "dmg=$dmg" >> "$GITHUB_OUTPUT"
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: Verbatim-dmg
+          path: ${{ steps.package.outputs.dmg }}
+          retention-days: 14
+
+      - name: Publish release
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DMG: ${{ steps.package.outputs.dmg }}
+        run: |
+          version=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" Verbatim/Resources/Info.plist)
+          notes="release-notes/$version.md"
+          [[ "$DMG" == "build/Verbatim-$version.dmg" ]] || { echo "Packaged $DMG, expected build/Verbatim-$version.dmg" >&2; exit 1; }
+          [[ -f "$notes" ]] || { echo "Write $notes before releasing $version" >&2; exit 1; }
+          gh release create "v$version" "$DMG" --target "$GITHUB_SHA" --title "Verbatim $version" --notes-file "$notes"

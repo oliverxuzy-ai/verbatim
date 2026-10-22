@@ -1,0 +1,12 @@
+0.80	6.44	A	Okay, let's get started. The goal today is to agree on the onboarding metrics for the next quarter.
+7.03	12.18	B	Before we do that, I want to flag that the activation numbers from last month look off.
+12.92	13.89	A	Off in what way?
+14.56	21.00	B	The dashboard counts trial accounts twice, so activation looks about ten percent higher than it really is.
+21.38	29.44	C	I can confirm that. I traced it yesterday. The join in the staging model duplicates rows when an account upgrades.
+29.85	30.61	D	Yeah.
+31.34	37.16	D	So should we pause the weekly report until it's fixed? Finance is reading it every Monday.
+37.41	42.13	C	I would rather ship the fix this week and add a note to the report in the meantime.
+42.83	46.80	A	That works for me. Let's add the note today and review the fix on Thursday.
+47.49	50.64	B	I'll write the note and send it to finance after this meeting.
+51.15	55.72	D	Great, and I will update the onboarding metric definitions in the doc.
+56.14	59.25	A	Perfect. Thanks everyone, that's all for today.

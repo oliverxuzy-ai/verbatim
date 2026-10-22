@@ -1,0 +1,87 @@
+name: Verbatim
+options:
+  bundleIdPrefix: dev.verbatim
+  deploymentTarget:
+    macOS: "26.0"
+  createIntermediateGroups: true
+  developmentLanguage: en
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MACOSX_DEPLOYMENT_TARGET: "26.0"
+    SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
+    SWIFT_APPROACHABLE_CONCURRENCY: YES
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    DEAD_CODE_STRIPPING: YES
+    # Ad-hoc signing by default. Set VERBATIM_SIGN_IDENTITY to a stable
+    # (self-signed is fine) code signing identity so macOS privacy grants
+    # survive rebuilds.
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "$(VERBATIM_SIGN_IDENTITY)"
+    VERBATIM_SIGN_IDENTITY: "-"
+    DEVELOPMENT_TEAM: ""
+packages:
+  FluidAudio:
+    url: https://github.com/FluidInference/FluidAudio.git
+    from: "0.17.7"
+targets:
+  Verbatim:
+    type: application
+    platform: macOS
+    sources:
+      - path: Verbatim
+    resources: []
+    dependencies:
+      - package: FluidAudio
+    info:
+      path: Verbatim/Resources/Info.plist
+      properties:
+        CFBundleDisplayName: Verbatim
+        CFBundleName: Verbatim
+        CFBundleShortVersionString: "0.5.1"
+        CFBundleVersion: "7"
+        LSApplicationCategoryType: public.app-category.productivity
+        LSUIElement: true
+        NSHumanReadableCopyright: ""
+        NSMicrophoneUsageDescription: Verbatim records your microphone to transcribe what you say in meetings.
+        NSAudioCaptureUsageDescription: Verbatim captures meeting audio played by other apps (Zoom, Meet, Teams) to transcribe the other participants.
+        NSCalendarsFullAccessUsageDescription: Verbatim reads your calendar so you can pick a meeting to transcribe and label speakers with attendee names.
+        NSSpeechRecognitionUsageDescription: Verbatim uses on-device speech recognition to transcribe meetings.
+    entitlements:
+      path: Verbatim/Resources/Verbatim.entitlements
+      properties: {}
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.verbatim.app
+        PRODUCT_NAME: Verbatim
+        # Ad-hoc signatures normally pin privacy grants to the exact build
+        # (cdhash), so every rebuild silently loses microphone and system
+        # audio access. An explicit designated requirement on the bundle
+        # identifier keeps the grants across local rebuilds.
+        OTHER_CODE_SIGN_FLAGS: "--requirements '=designated => identifier \"dev.verbatim.app\"'"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ENABLE_HARDENED_RUNTIME: NO
+        COMBINE_HIDPI_IMAGES: YES
+        GENERATE_INFOPLIST_FILE: NO
+  VerbatimTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: VerbatimTests
+    dependencies:
+      - target: Verbatim
+    settings:
+      base:
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Verbatim.app/Contents/MacOS/Verbatim"
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: dev.verbatim.tests
+schemes:
+  Verbatim:
+    build:
+      targets:
+        Verbatim: all
+        VerbatimTests: [test]
+    test:
+      targets:
+        - VerbatimTests

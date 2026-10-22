@@ -1,0 +1,58 @@
+name: Bug report
+description: Something doesn't work as expected
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Please don't attach recordings or transcripts of real meetings unless everyone in them agreed.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Start a recording from the menu bar during a Zoom call
+        2. ...
+  - type: input
+    id: version
+    attributes:
+      label: Verbatim version
+      description: From the DMG you installed, for example Verbatim-0.5.1.dmg.
+      placeholder: "0.5.1"
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version and Mac
+      placeholder: "macOS 26.1, MacBook Pro M3"
+    validations:
+      required: true
+  - type: dropdown
+    id: engine
+    attributes:
+      label: Transcription engine
+      options:
+        - Apple on-device
+        - Soniox (cloud)
+  - type: dropdown
+    id: meeting
+    attributes:
+      label: Kind of meeting
+      options:
+        - Online (Zoom, Meet, Teams, ...)
+        - In-person (one microphone, several people)
+        - Hybrid
+        - Not about a meeting
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Screenshots, the meeting app, headphones or speakers, language.

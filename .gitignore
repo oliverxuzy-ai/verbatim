@@ -1,0 +1,26 @@
+# Build output
+build/
+DerivedData/
+*.dSYM/
+*.xcarchive
+
+# Generated from project.yml by XcodeGen (run `xcodegen generate`)
+*.xcodeproj/
+
+# Xcode and SwiftPM per-user state
+xcuserdata/
+*.xcuserstate
+.swiftpm/
+
+# Secrets: the app keeps its own in ~/Library/Application Support/Verbatim,
+# these only guard against a copy landing in the repo
+secrets.json
+.env
+.env.*
+*.p12
+*.pem
+
+# Benchmark audio (download steps in Bench/README.md)
+Bench/ami/*.wav
+
+.DS_Store
