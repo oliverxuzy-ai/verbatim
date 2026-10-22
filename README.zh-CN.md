@@ -16,7 +16,7 @@ macOS 菜单栏会议转写工具：实时转写、区分说话人、记住每�
 
 [English](README.md) · 简体中文
 
-<img src="docs/screenshots/main-live-light.png" width="860" alt="Verbatim 主窗口：实时转写，带说话人和时间戳">
+<img src="docs/hero.jpg" width="900" alt="Verbatim 在 Mac 上：主窗口里的逐字稿、菜单栏窗口和录音胶囊">
 
 </div>
 

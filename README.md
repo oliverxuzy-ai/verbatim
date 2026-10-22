@@ -17,7 +17,7 @@ replaces what was said.
 
 English · [简体中文](README.zh-CN.md)
 
-<img src="docs/screenshots/main-live-light.png" width="860" alt="Verbatim's main window showing a live transcript with speakers and timestamps">
+<img src="docs/hero.jpg" width="900" alt="Verbatim on a Mac: the main window with a transcript, the menu bar window and the recording capsule">
 
 </div>
 
