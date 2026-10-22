@@ -273,7 +273,7 @@ struct SpeakerCarryOverTests {
                             language: "en-US", engine: "apple", micMode: .solo)
         old.speakers = [
             Speaker(id: "me", name: "Me", colorIndex: 0, isMe: true, isConfirmed: true),
-            Speaker(id: "system:0", name: "Jamie", colorIndex: 1, isConfirmed: true),
+            Speaker(id: "system:0", name: "Alex", colorIndex: 1, isConfirmed: true),
         ]
         old.segments = [
             Segment(channel: .system, speakerID: "system:0", start: 0, end: 5, text: "Short one.", isFinal: true),
@@ -292,8 +292,72 @@ struct SpeakerCarryOverTests {
         let carried = SpeakerCarryOver.apply(from: old, to: new)
         #expect(carried.speakers.filter { !$0.isMe }.count == 3)
         #expect(carried.segments.map(\.speakerID) == ["system:rS1", "system:0", "system:rS3"])
-        #expect(carried.speaker("system:0")?.name == "Jamie")
-        #expect(carried.speakers.filter { $0.name == "Jamie" }.count == 1)
+        #expect(carried.speaker("system:0")?.name == "Alex")
+        #expect(carried.speakers.filter { $0.name == "Alex" }.count == 1)
+    }
+
+    /// Refining twice: the first refine left "system:rS1" (you) and
+    /// "system:rS2" (Bob). New clusters that share no time with them must
+    /// not pick up those names just because pyannote reused the labels.
+    @Test func secondRefineDoesNotInheritNamesByLabel() {
+        var old = Recording(meeting: MeetingInfo(title: "Sync"), startedAt: .now, endedAt: .now,
+                            language: "en-US", engine: "apple", micMode: .solo)
+        old.speakers = [
+            Speaker(id: "system:rS1", name: "Me", colorIndex: 1, isMe: true, isConfirmed: true),
+            Speaker(id: "system:rS2", name: "Bob", colorIndex: 2, isConfirmed: true),
+        ]
+        old.segments = [
+            Segment(channel: .system, speakerID: "system:rS1", start: 0, end: 10, text: "Mine.", isFinal: true),
+            Segment(channel: .system, speakerID: "system:rS2", start: 11, end: 20, text: "Bob's.", isFinal: true),
+        ]
+        var new = old
+        new.speakers = [
+            Speaker(id: "system:S1", name: "Speaker 1", colorIndex: 1),
+            Speaker(id: "system:S2", name: "Speaker 2", colorIndex: 2),
+        ]
+        new.segments = [
+            Segment(channel: .system, speakerID: "system:S1", start: 30, end: 40, text: "Later.", isFinal: true),
+            Segment(channel: .system, speakerID: "system:S2", start: 41, end: 50, text: "Later still.", isFinal: true),
+        ]
+
+        let carried = SpeakerCarryOver.apply(from: old, to: new)
+        #expect(carried.segments.map(\.speakerID) == ["system:rS1-2", "system:rS2-2"])
+        #expect(!carried.speakers.contains { $0.name == "Bob" || $0.isMe })
+    }
+
+    @Test func mergingMovesLinesAndJoinsTurns() {
+        var rec = Recording(meeting: MeetingInfo(title: "Room"), startedAt: .now, endedAt: .now,
+                            language: "en-US", engine: "apple", micMode: .solo)
+        rec.speakers = [
+            Speaker(id: "me", name: "Me", colorIndex: 0, isMe: true, isConfirmed: true),
+            Speaker(id: "system:S1", name: "Speaker 1", colorIndex: 1),
+        ]
+        rec.speakerSources = ["system:S1": "voiceprint"]
+        rec.segments = [
+            Segment(channel: .system, speakerID: "me", start: 0, end: 4, text: "So this is", isFinal: true),
+            Segment(channel: .system, speakerID: "system:S1", start: 4.5, end: 8, text: "the semantic layer.", isFinal: true),
+        ]
+        let merged = rec.merging("system:S1", into: "me")
+        #expect(merged.speakers.map(\.id) == ["me"])
+        #expect(merged.speakerSources?["system:S1"] == nil)
+        #expect(merged.segments.map(\.text) == ["So this is the semantic layer."])
+    }
+}
+
+struct SharedVoiceTests {
+    static func unit(_ v: [Float]) -> [Float] {
+        let n = v.reduce(0) { $0 + $1 * $1 }.squareRoot()
+        return v.map { $0 / n }
+    }
+
+    /// The same voice on the mic and on the call audio is one person; a
+    /// voice only on the mic is not.
+    @Test func matchesVoicesAcrossChannels() {
+        let mic = ["S1": Self.unit([1, 0.2, 0]), "S2": Self.unit([0, 0, 1])]
+        let call = ["S1": Self.unit([1, 0.3, 0.1]), "S2": Self.unit([0, 1, 0])]
+        #expect(OfflineDiarization.sharedVoices(mic, call) == ["S1"])
+        #expect(OfflineDiarization.sharedVoices(call, mic) == ["S1"])
+        #expect(OfflineDiarization.sharedVoices(mic, [:]).isEmpty)
     }
 }
 
