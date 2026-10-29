@@ -264,7 +264,7 @@ private struct TranscriptionSettings: View {
             SettingsRow(title: "Refine after each meeting", detail: "Re-clusters speakers over the whole meeting (and, with the Apple engine, re-transcribes with full context). Also decides on its own whether it was an online, in-person or hybrid meeting. About 20 seconds per hour of audio; your speaker names are kept.") {
                 Toggle("", isOn: $settings.autoRefine).labelsHidden().toggleStyle(.switch)
             }
-            SettingsRow(title: "Echo cancellation on speakers", detail: "When you're not on headphones, removes the other side's voice from your mic so it isn't transcribed twice.", showDivider: false) {
+            SettingsRow(title: "Echo cancellation on speakers", detail: "When you're not on headphones, removes the other side's voice from your mic so it isn't transcribed twice. Skipped when a call is already using the mic, since switching it on would cut you out for a moment; repeated words are still filtered from the transcript.", showDivider: false) {
                 Toggle("", isOn: $settings.echoCancellation).labelsHidden().toggleStyle(.switch)
             }
         }
