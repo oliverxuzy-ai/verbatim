@@ -158,8 +158,6 @@ final class RecordingSession {
         startDate = .now
         transcript.recording.startedAt = startDate
 
-        // Echo cancellation only matters when the mic can hear the speakers.
-        let useAEC = settings.echoCancellation && micMode == .solo && !AudioRouting.outputIsHeadphones()
         // A missing "System Audio Recording" grant doesn't fail the tap, it
         // just yields silence, so check (and ask) before relying on it.
         if SystemAudioPermission.status != .granted {
@@ -183,6 +181,17 @@ final class RecordingSession {
             Task { @MainActor in self?.restartSystemCapture() }
         }
         if cancelled { throw CancellationError() }
+        // Echo cancellation only matters when the mic can hear the speakers.
+        // Decided right before the mic starts: the permission prompt above
+        // can take a while, and the call may have opened the mic meanwhile.
+        var useAEC = settings.echoCancellation && micMode == .solo && !AudioRouting.outputIsHeadphones()
+        // Apple's voice processing takes over the shared mic, which cuts out
+        // a call that is already using it for a few seconds. Mid-call, leave
+        // the mic alone and let the transcript's echo filter drop leaked words.
+        if useAEC, let pid = AudioRouting.otherProcessCapturingInput() {
+            Log.audio.notice("Skipping voice processing: microphone in use by pid \(pid)")
+            useAEC = false
+        }
         try mic.start(voiceProcessing: useAEC) { buffer, host in micPipe.ingest(buffer, hostTime: host) }
         echoCancellationActive = mic.echoCancellationActive
 
