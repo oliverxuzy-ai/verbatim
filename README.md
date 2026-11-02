@@ -84,6 +84,8 @@ Verbatim combines several signals and only suggests a name when the evidence is 
    ```
 4. Follow the short onboarding: grant the permissions below and, optionally, connect Google Calendar and Notion.
 
+Updates: Verbatim checks GitHub Releases a few times a day, downloads a new version in the background and restarts into it when you aren't recording or using it. Turn this off, or check by hand, in **Settings → General → Updates**. Recordings and settings are kept.
+
 Updating: download the new DMG and drag it over the old copy. Your recordings and settings stay.
 
 ## Requirements
@@ -147,7 +149,7 @@ Paste an Anthropic API key in **Settings → Transcription → Speaker names** t
 | Audio and transcripts | Stay on your Mac in `~/Library/Application Support/Verbatim/Recordings/<id>/` (`recording.json`, plus 16 kHz lossless `mic.m4a` and `system.m4a`). |
 | API keys and tokens | A user-only file, `~/Library/Application Support/Verbatim/secrets.json` (mode 0600). |
 | Calendar | Read directly from Google with your own OAuth client. |
-| Network | Only when you use it: Soniox (if chosen as engine), Notion (on export), Anthropic (if you add a key), and one-time model downloads. |
+| Network | Only when you use it: Soniox (if chosen as engine), Notion (on export), Anthropic (if you add a key), and one-time model downloads. Plus a check of GitHub's latest release every few hours, unless you turn off automatic updates. |
 
 ## How it works
 

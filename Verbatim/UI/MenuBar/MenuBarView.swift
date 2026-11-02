@@ -56,12 +56,31 @@ struct MenuBarView: View {
                 Text(model.settings.engine.label).font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
             }
             Spacer()
+            updateButton
             Button("Quit") { NSApp.terminate(nil) }
                 .buttonStyle(.v(.ghost, .small))
                 .foregroundStyle(Theme.textSecondary)
         }
         .padding(.horizontal, 12)
         .frame(height: 34)
+    }
+
+    /// Shown once a newer version is downloaded (or, for a copy that can't
+    /// replace itself, found).
+    @ViewBuilder private var updateButton: some View {
+        let updater = model.updater
+        switch updater.state {
+        case let .ready(u) where !model.isRecording:
+            Button("Update to \(u.version)") { updater.act() }
+                .buttonStyle(.v(.primary, .small))
+                .help("Restart Verbatim with the new version")
+        case let .available(u) where !updater.canInstall:
+            Button("Get \(u.version)") { closingMenu { updater.act() } }
+                .buttonStyle(.v(.secondary, .small))
+                .help("Open the release page on GitHub")
+        default:
+            EmptyView()
+        }
     }
 
     // MARK: Active

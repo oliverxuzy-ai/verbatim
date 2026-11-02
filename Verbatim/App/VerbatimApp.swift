@@ -84,8 +84,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         #endif
         model.launch()
-        if model.settings.hasCompletedOnboarding { model.windows.showMain() }
+        // After a self-update the app comes back quietly, reopening the main
+        // window only if it was open before.
+        let updatedFrom = args.firstIndex(of: "--updated-from").flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil }
+        if model.settings.hasCompletedOnboarding, updatedFrom == nil { model.windows.showMain() }
         if CommandLine.arguments.contains("--show-main") { model.windows.showMain() }
+        if let updatedFrom {
+            model.toasts.show(.success, "Updated to Verbatim \(model.updater.current)", detail: "From version \(updatedFrom).")
+        }
         if CommandLine.arguments.contains("--show-settings") { model.windows.showSettings() }
     }
 
