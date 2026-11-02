@@ -52,6 +52,8 @@ final class RecordingSession {
     private var updateTasks: [Task<Void, Never>] = []
     private var updateContinuations: [AsyncStream<EngineUpdate>.Continuation] = []
     private var ticker: Task<Void, Never>?
+    /// Off-main log of every engine result, for recovery after a crash or hang.
+    private var journal: TranscriptJournal?
     /// Host time (seconds) of recording time zero. When continuing, that is
     /// before this session started, by the length already recorded.
     private var sessionStartHost: Double = 0
@@ -113,10 +115,12 @@ final class RecordingSession {
             try await startThrowing()
         } catch is CancellationError {
             teardownCaptures()
+            journal?.discard()
             dropAbandonedContinuationAudio()
         } catch {
             Log.app.error("Recording failed to start: \(error.localizedDescription)")
             teardownCaptures()
+            journal?.discard()
             dropAbandonedContinuationAudio()
             if phase != .stopping && phase != .finished { phase = .failed(error.localizedDescription) }
         }
@@ -170,10 +174,12 @@ final class RecordingSession {
             fallbackLabel: "Speaker"
         ))
 
+        try FileManager.default.createDirectory(at: store.folder(for: id), withIntermediateDirectories: true)
+        journal = TranscriptJournal(folder: store.folder(for: id))
+
         try await micEngine.start(updates: makeUpdateSink(.mic))
         try await systemEngine.start(updates: makeUpdateSink(.system))
 
-        try FileManager.default.createDirectory(at: store.folder(for: id), withIntermediateDirectories: true)
         let micPipe = ChannelPipeline(
             channel: .mic, policy: .firstChannel,
             sink: try? AudioFileSink(url: store.liveAudioURL(for: id, channel: .mic)),
@@ -297,7 +303,9 @@ final class RecordingSession {
     }
 
     /// Engines call back on arbitrary threads; funnel updates through an
-    /// ordered stream consumed on the main actor.
+    /// ordered stream consumed on the main actor. Each update is journaled
+    /// right there on the engine's thread, so it reaches disk even while the
+    /// main thread is stuck.
     private func makeUpdateSink(_ channel: AudioChannel) -> @Sendable (EngineUpdate) -> Void {
         let (stream, continuation) = AsyncStream<EngineUpdate>.makeStream()
         updateContinuations.append(continuation)
@@ -309,18 +317,20 @@ final class RecordingSession {
                 if update.hasSpeech { self.endDetector?.heardSpeech(on: channel, at: .now) }
             }
         })
-        return { continuation.yield($0) }
+        let journal = self.journal
+        return { update in
+            journal?.record(update, channel: channel)
+            continuation.yield(update)
+        }
     }
 
     private func alignOffsets() {
         for (channel, pipe) in pipelines {
             if let host = pipe.startHostTime {
-                transcript.setOffset(channel, max(0, AudioFormats.hostTimeToSeconds(host) - sessionStartHost))
+                let offset = max(0, AudioFormats.hostTimeToSeconds(host) - sessionStartHost)
+                transcript.setOffset(channel, offset)
+                journal?.noteOffset(offset, for: channel)
             }
-        }
-        // Keep the autosaved offsets right too, for crash recovery.
-        if continuing != nil, transcript.recording.channelOffsets != fileOffsets {
-            transcript.recording.channelOffsets = fileOffsets
         }
     }
 
@@ -390,7 +400,7 @@ final class RecordingSession {
         levelHistory.append(max(micLevel, systemLevel))
         if tickCount % 8 == 0 { transcript.resolvePending() }
         if tickCount % 15 == 0 { checkMeetingEnd() } // ~1 s
-        if tickCount % 150 == 0 { store.persist(transcript.recording) } // ~10 s autosave
+        if tickCount % 75 == 0 { autosave() } // ~5 s
         // No call audio after 3 s: rebuild the tap once (this also recovers
         // the first recording right after the permission was granted), using
         // the output-clocked layout. Warn only if that doesn't help either.
@@ -404,6 +414,15 @@ final class RecordingSession {
         if tickCount == 600, let sys = pipelines[.system], sys.voicedSeconds < 0.05 {
             warn("System audio has been silent for 40 s. If others are talking, check the system audio permission.")
         }
+    }
+
+    /// Snapshot the transcript and write it off the main thread. Lines newer
+    /// than the last autosave are in the journal.
+    private func autosave() {
+        alignOffsets()
+        var snapshot = transcript.recording
+        snapshot.channelOffsets = fileOffsets
+        store.persistInBackground(snapshot)
     }
 
     private func restartSystemCapture(clockedByOutput: Bool = false) {
@@ -432,11 +451,14 @@ final class RecordingSession {
         // Stopping during start-up: make the start sequence bail out before
         // it opens any device.
         cancelled = true
+        let wasRecording = phase == .recording
         phase = .stopping
         ticker?.cancel()
         endDetector = nil
         cancelAutoStop()
         teardownCaptures()
+        // Finishing can take a while; keep what we have safe meanwhile.
+        if wasRecording { autosave() }
         // Flush engines and diarizers; never let a stuck engine block saving.
         for pipe in pipelines.values {
             do { try await withTimeout(30) { await pipe.finish() } } catch {
@@ -451,6 +473,7 @@ final class RecordingSession {
         updateTasks = []
         // Continue stopped before any audio: leave the recording as it was.
         if let original = continuing, !captureStarted {
+            journal?.discard()
             dropAbandonedContinuationAudio()
             transcript.recording = original
             store.save(original)
@@ -474,6 +497,7 @@ final class RecordingSession {
         let folder = store.folder(for: recording.id)
         await Task.detached(priority: .userInitiated) { RecordingStore.finalizeAudio(in: folder) }.value
         store.save(recording)
+        journal?.discard()
         phase = .finished
         return recording
     }

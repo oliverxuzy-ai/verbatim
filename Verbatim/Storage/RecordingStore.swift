@@ -55,21 +55,36 @@ final class RecordingStore {
         FileManager.default.fileExists(atPath: url.path) && AudioFileSink.seconds(url) > 0
     }
 
-    /// Recordings interrupted by a crash or force quit: compress leftover
-    /// audio and close them at the length of what was captured.
-    func recoverInterrupted(except liveID: UUID?) {
+    /// Recordings interrupted by a crash, a force quit or a hang: add what
+    /// the transcript journal has beyond the last autosave, compress leftover
+    /// audio and close them at the length of what was captured. Returns the
+    /// recovered recordings.
+    @discardableResult
+    func recoverInterrupted(except liveID: UUID?, myName: String = "Me") -> [Recording] {
+        var recovered: [Recording] = []
         for var rec in recordings where rec.endedAt == nil && rec.id != liveID {
             let folder = folder(for: rec.id)
+            // A continued recording: channels that had audio before the
+            // continue keep their file offsets (see ContinuationPlan).
+            let saved: Set<AudioChannel> = rec.continuations == nil ? [] : Set(AudioChannel.allCases.filter { Self.hasSavedAudio(audioURL(for: rec.id, channel: $0)) })
+            let merged = JournalRecovery.merge(TranscriptJournal.read(in: folder), into: rec, myName: myName, savedChannels: saved)
+            rec = merged.recording
             Self.finalizeAudio(in: folder)
             // The mic file covers the whole timeline (also across a continue).
             let mic = audioURL(for: rec.id, channel: .mic)
-            let seconds = Self.hasSavedAudio(mic)
-                ? (rec.channelOffsets?[AudioChannel.mic.rawValue] ?? 0) + AudioFileSink.seconds(mic)
-                : rec.segments.map(\.end).max() ?? 0
-            rec.endedAt = rec.startedAt.addingTimeInterval(rec.unrecordedTime + seconds)
+            let audioEnd = Self.hasSavedAudio(mic) ? AudioFileSink.seconds(mic) + (rec.channelOffsets?[AudioChannel.mic.rawValue] ?? 0) : 0
+            let lastLine = rec.segments.map(\.end).max() ?? 0
+            rec.endedAt = rec.startedAt.addingTimeInterval(rec.unrecordedTime + max(audioEnd, lastLine))
+            let note = merged.replayed > 0
+                ? "Verbatim quit unexpectedly while recording. The transcript was restored from the autosave plus \(merged.replayed) lines from the crash journal."
+                : "Verbatim quit unexpectedly while recording. The transcript was restored from the autosave."
+            rec.diagnostics = (rec.diagnostics ?? []) + [note]
             save(rec)
-            Log.app.info("Recovered interrupted recording \(rec.id)")
+            TranscriptJournal.remove(in: folder)
+            recovered.append(rec)
+            Log.app.info("Recovered interrupted recording \(rec.id) (\(merged.replayed) lines from the journal)")
         }
+        return recovered
     }
 
     func reload() {
@@ -100,11 +115,26 @@ final class RecordingStore {
 
     /// Write to disk without touching the in-memory list (used for autosave
     /// while a recording is live and the UI reads the live model instead).
+    /// Waits for any background autosave still queued, so an older snapshot
+    /// can never land on top of this one.
     func persist(_ recording: Recording) {
         let dir = folder(for: recording.id)
+        writeQueue.sync { Self.write(recording, to: dir) }
+    }
+
+    /// Autosave without blocking the main thread: a long meeting's JSON takes
+    /// a while to encode. Writes stay in order with `persist` and `save`.
+    func persistInBackground(_ recording: Recording) {
+        let dir = folder(for: recording.id)
+        writeQueue.async { Self.write(recording, to: dir) }
+    }
+
+    private let writeQueue = DispatchQueue(label: "dev.verbatim.store", qos: .utility)
+
+    nonisolated private static func write(_ recording: Recording, to dir: URL) {
         do {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            let data = try Self.encoder.encode(recording)
+            let data = try encoder.encode(recording)
             try data.write(to: dir.appendingPathComponent("recording.json"), options: .atomic)
         } catch {
             Log.app.error("Failed to save recording \(recording.id): \(error.localizedDescription)")

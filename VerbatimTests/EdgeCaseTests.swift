@@ -73,4 +73,86 @@ struct RecoveryTests {
         #expect(abs(recovered.duration - 2) < 0.1)
         #expect(FileManager.default.fileExists(atPath: reopened.audioURL(for: rec.id, channel: .mic).path))
     }
+
+    /// A crash or hang right after an autosave: the lines recognized since
+    /// then (and the words still being recognized) come back from the journal.
+    @Test func journalRestoresLinesMissingFromTheLastAutosave() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("verbatim-journal-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = RecordingStore(rootURL: root)
+        var rec = Recording(meeting: MeetingInfo(title: "Crashed"), startedAt: .now.addingTimeInterval(-60),
+                            language: "en-US", engine: "apple", micMode: .solo)
+        rec.speakers = [Speaker(id: Speaker.meID, name: "Me", colorIndex: 0, isMe: true, isConfirmed: true)]
+        rec.segments = [Segment(channel: .mic, speakerID: Speaker.meID, start: 0.5, end: 2, text: "Let's start with the budget.", isFinal: true)]
+        store.save(rec) // the last autosave before the crash
+
+        let journal = TranscriptJournal(folder: store.folder(for: rec.id))
+        journal.noteOffset(0.5, for: .mic)
+        journal.noteOffset(1, for: .system)
+        journal.record(EngineUpdate(finals: [EngineResult(start: 0, end: 1.5, text: "Let's start with the budget.")]), channel: .mic)
+        journal.record(EngineUpdate(finals: [EngineResult(start: 2, end: 4, text: "Marketing asked for twenty more.")]), channel: .system)
+        journal.record(EngineUpdate(finals: [EngineResult(start: 5, end: 6.5, text: "That works for me.")]), channel: .mic)
+        journal.record(EngineUpdate(volatile: EngineResult(start: 6, end: 7, text: "Then we ship on")), channel: .system)
+        journal.flush()
+
+        let reopened = RecordingStore(rootURL: root)
+        let recovered = reopened.recoverInterrupted(except: nil, myName: "Me")
+        #expect(recovered.map(\.id) == [rec.id])
+        let out = try #require(reopened.recording(rec.id))
+        let texts = out.visibleSegments.map(\.text)
+        #expect(texts.filter { $0.contains("budget") }.count == 1)
+        #expect(texts.contains { $0.contains("Marketing asked for twenty more") })
+        #expect(texts.contains { $0.contains("That works for me") })
+        #expect(texts.contains { $0.contains("Then we ship on") })
+        #expect(out.visibleSegments.filter { $0.channel == .mic }.allSatisfy { $0.speakerID == Speaker.meID })
+        #expect(out.visibleSegments.filter { $0.channel == .system }.allSatisfy { out.speaker($0.speakerID) != nil })
+        #expect(out.channelOffsets?["mic"] == 0.5)
+        #expect(out.channelOffsets?["system"] == 1)
+        #expect(out.endedAt != nil)
+        #expect(abs(out.duration - 8) < 0.1)
+        #expect(!FileManager.default.fileExists(atPath: journal.url.path))
+    }
+
+    @Test func journalSkipsALineCutShortByTheCrash() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("verbatim-journal-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let journal = TranscriptJournal(folder: dir)
+        journal.record(EngineUpdate(finals: [EngineResult(start: 0, end: 1, text: "Hello there.")]), channel: .mic)
+        journal.flush()
+        let handle = try FileHandle(forWritingTo: journal.url)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data(#"{"kind":"final","channel":"mic","sta"#.utf8))
+        try handle.close()
+        let entries = TranscriptJournal.read(in: dir)
+        #expect(entries.count == 1)
+        #expect(entries.first?.text == "Hello there.")
+    }
+
+    @Test func journalIsGoneAfterACleanStop() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("verbatim-journal-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let journal = TranscriptJournal(folder: dir)
+        journal.record(EngineUpdate(finals: [EngineResult(start: 0, end: 1, text: "Hello there.")]), channel: .mic)
+        journal.discard()
+        journal.record(EngineUpdate(finals: [EngineResult(start: 1, end: 2, text: "Late result.")]), channel: .mic)
+        journal.flush()
+        #expect(!FileManager.default.fileExists(atPath: journal.url.path))
+    }
+
+    @Test func backgroundAutosaveNeverOverwritesALaterSave() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("verbatim-autosave-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = RecordingStore(rootURL: root)
+        var rec = Recording(meeting: MeetingInfo(title: "Live"), startedAt: .now, language: "en-US", engine: "apple", micMode: .solo)
+        rec.segments = (0..<2000).map { i in
+            Segment(channel: .mic, speakerID: Speaker.meID, start: Double(i), end: Double(i) + 0.9, text: "Line \(i)", isFinal: true)
+        }
+        store.persistInBackground(rec)
+        var finished = rec
+        finished.endedAt = .now
+        store.save(finished)
+        #expect(RecordingStore(rootURL: root).recording(rec.id)?.endedAt != nil)
+    }
 }

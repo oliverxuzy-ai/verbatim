@@ -52,7 +52,7 @@ final class AppModel {
     func launch() {
         windows.model = self
         panel.model = self
-        store.recoverInterrupted(except: session?.recordingID)
+        announceRecovered(store.recoverInterrupted(except: session?.recordingID, myName: settings.myName))
         hotKey = GlobalHotKey { [weak self] in self?.toggleRecording() }
         hotKey?.register()
         calendar.startAutoRefresh()
@@ -70,6 +70,21 @@ final class AppModel {
     }
 
     var isRecording: Bool { session?.isActive == true }
+
+    /// A recording cut short by a crash, force quit or hang was restored on
+    /// launch: show it, and say how to get the full transcript back.
+    private func announceRecovered(_ recovered: [Recording]) {
+        guard let latest = recovered.max(by: { $0.startedAt < $1.startedAt }) else { return }
+        selectedRecordingID = latest.id
+        let title = recovered.count == 1 ? "Recovered an interrupted recording" : "Recovered \(recovered.count) interrupted recordings"
+        let hint = latest.engine == EngineKind.apple.rawValue
+            ? "Refine rebuilds the full transcript from the audio."
+            : "Everything up to the last few seconds is saved."
+        toasts.show(.info, title, detail: "\(latest.meeting.title): Verbatim quit while recording. \(hint)",
+                    actionTitle: "Refine") { [weak self] in
+            Task { await self?.refine(latest.id) }
+        }
+    }
 
     /// Every "Connect calendar" button: sign in to Google, or open the
     /// one-time OAuth client setup if it isn't done yet.

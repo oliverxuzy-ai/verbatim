@@ -147,4 +147,23 @@ struct ContinueRecordingTests {
         #expect(transcript.recording.speaker("system:p2.1")?.name == "Speaker 4")
         #expect(transcript.recording.speaker("system:1")?.name == "Avery")
     }
+
+    @Test func crashJournalOfAContinuedPartKeepsFileOffsetsAndNewSpeakerKeys() {
+        var rec = Recording(meeting: MeetingInfo(title: "T"), startedAt: .now.addingTimeInterval(-900),
+                            language: "en-US", engine: "soniox", micMode: .solo)
+        rec.channelOffsets = ["mic": 0, "system": 4] // file offsets, as autosaved
+        rec.continuations = [.init(at: 300, gap: 200)]
+        rec.speakers = [Speaker(id: "system:1", name: "Avery", colorIndex: 1, isConfirmed: true)]
+        rec.segments = [Segment(channel: .system, speakerID: "system:1", start: 280, end: 284, text: "See you after the break.", isFinal: true)]
+        let entries = [
+            TranscriptJournal.Entry(kind: .offset, channel: .system, start: 300.4),
+            TranscriptJournal.Entry(kind: .result, channel: .system, start: 2, end: 4, text: "We're back.", speaker: "1"),
+        ]
+        let out = JournalRecovery.merge(entries, into: rec, myName: "Me", savedChannels: [.mic, .system]).recording
+        let back = out.segments.first { $0.text.contains("back") }
+        #expect(back?.speakerID == "system:p2.1")
+        #expect(abs((back?.start ?? 0) - 302.4) < 0.01)
+        #expect(out.channelOffsets?["system"] == 4)
+        #expect(out.speaker("system:1")?.name == "Avery")
+    }
 }

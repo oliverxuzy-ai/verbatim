@@ -58,4 +58,11 @@ nonisolated struct ContinuationPlan: Sendable, Equatable {
     static func labelPrefix(for recording: Recording) -> String {
         "p\((recording.continuations?.count ?? 0) + 2)."
     }
+
+    /// The prefix the part being recorded now uses, for a recording that is
+    /// open (crash recovery replays its journal with it).
+    static func livePrefix(of recording: Recording) -> String {
+        guard let count = recording.continuations?.count, count > 0 else { return "" }
+        return "p\(count + 1)."
+    }
 }
