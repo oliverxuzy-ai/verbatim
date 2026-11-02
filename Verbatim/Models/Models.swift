@@ -141,8 +141,23 @@ nonisolated struct Recording: Codable, Identifiable, Sendable, Hashable {
     /// Seconds between the recording start and each channel file's first
     /// sample, keyed by channel raw value. Lets re-transcription line up.
     var channelOffsets: [String: Double]?
+    /// Each time the recording was continued after a stop. The time between
+    /// the stop and the continue isn't recorded and isn't on the timeline.
+    var continuations: [Continuation]?
 
-    var duration: TimeInterval { (endedAt ?? .now).timeIntervalSince(startedAt) }
+    /// One "Continue recording" after a stop.
+    nonisolated struct Continuation: Codable, Hashable, Sendable {
+        /// Recording time where the new part starts.
+        var at: TimeInterval
+        /// Wall-clock seconds between the stop and the continue.
+        var gap: TimeInterval
+    }
+
+    /// Wall-clock time between stops and continues, left out of the timeline.
+    var unrecordedTime: TimeInterval { continuations?.reduce(0) { $0 + $1.gap } ?? 0 }
+
+    /// Length of the recording timeline (what was actually recorded).
+    var duration: TimeInterval { max(0, (endedAt ?? .now).timeIntervalSince(startedAt) - unrecordedTime) }
 
     var visibleSegments: [Segment] {
         // A line with no letters or digits ("." from a cough) is not speech.

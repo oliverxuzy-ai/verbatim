@@ -34,17 +34,25 @@ final class RecordingStore {
         folder(for: id).appendingPathComponent("\(channel.rawValue).caf")
     }
 
-    /// Compress a finished recording's live audio files.
+    /// Compress a finished recording's live audio files. A continued
+    /// recording's new part is appended to the audio already saved.
     nonisolated static func finalizeAudio(in folder: URL) {
         for channel in AudioChannel.allCases {
             let caf = folder.appendingPathComponent("\(channel.rawValue).caf")
             guard FileManager.default.fileExists(atPath: caf.path) else { continue }
+            let m4a = folder.appendingPathComponent("\(channel.rawValue).m4a")
             do {
-                try AudioFileSink.compress(caf, to: folder.appendingPathComponent("\(channel.rawValue).m4a"))
+                let saved = hasSavedAudio(m4a) ? [m4a] : []
+                try AudioFileSink.compress(saved + [caf], to: m4a)
             } catch {
                 Log.audio.error("Compressing \(caf.lastPathComponent) failed: \(error.localizedDescription)")
             }
         }
+    }
+
+    /// Whether a channel already has audio saved (a valid file with frames).
+    nonisolated static func hasSavedAudio(_ url: URL) -> Bool {
+        FileManager.default.fileExists(atPath: url.path) && AudioFileSink.seconds(url) > 0
     }
 
     /// Recordings interrupted by a crash or force quit: compress leftover
@@ -52,10 +60,13 @@ final class RecordingStore {
     func recoverInterrupted(except liveID: UUID?) {
         for var rec in recordings where rec.endedAt == nil && rec.id != liveID {
             let folder = folder(for: rec.id)
-            let caf = liveAudioURL(for: rec.id, channel: .mic)
-            let seconds = (try? AVAudioFile(forReading: caf)).map { Double($0.length) / $0.processingFormat.sampleRate }
             Self.finalizeAudio(in: folder)
-            rec.endedAt = rec.startedAt.addingTimeInterval(seconds ?? rec.segments.map(\.end).max() ?? 0)
+            // The mic file covers the whole timeline (also across a continue).
+            let mic = audioURL(for: rec.id, channel: .mic)
+            let seconds = Self.hasSavedAudio(mic)
+                ? (rec.channelOffsets?[AudioChannel.mic.rawValue] ?? 0) + AudioFileSink.seconds(mic)
+                : rec.segments.map(\.end).max() ?? 0
+            rec.endedAt = rec.startedAt.addingTimeInterval(rec.unrecordedTime + seconds)
             save(rec)
             Log.app.info("Recovered interrupted recording \(rec.id)")
         }

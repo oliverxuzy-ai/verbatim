@@ -17,6 +17,11 @@ nonisolated final class ChannelPipeline: @unchecked Sendable {
     /// engines, diarizer) keeps running in step with the wall clock.
     let paused = Locked(false)
     private let firstHostTime = Locked<UInt64?>(nil)
+    /// Set when continuing a recording whose file for this channel already
+    /// ends at `fileEnd` (recording time; time zero is `zeroHost` in host
+    /// seconds). The first buffer is preceded by silence up to its own time,
+    /// so the finished file stays one continuous timeline.
+    private let continuation = Locked<(fileEnd: Double, zeroHost: Double)?>(nil)
 
     private struct Meter {
         var level: Float = 0
@@ -37,7 +42,14 @@ nonisolated final class ChannelPipeline: @unchecked Sendable {
     func ingest(_ buffer: AVAudioPCMBuffer, hostTime: UInt64) {
         let box = SendableBuffer(buffer: buffer)
         queue.async { [self] in
-            firstHostTime.withLock { if $0 == nil { $0 = hostTime } }
+            let isFirst = firstHostTime.withLock { first -> Bool in
+                guard first == nil else { return false }
+                first = hostTime
+                return true
+            }
+            if isFirst, let c = continuation.current {
+                sink?.writeSilence(AudioFormats.hostTimeToSeconds(hostTime) - c.zeroHost - c.fileEnd)
+            }
             guard let mono = box.buffer.monoFloat(policy) else { return }
             if paused.current, let data = mono.floatChannelData?[0] {
                 data.update(repeating: 0, count: Int(mono.frameLength))
@@ -78,6 +90,11 @@ nonisolated final class ChannelPipeline: @unchecked Sendable {
     var receivedSeconds: Double { meter.withLock { $0.seconds } }
 
     var startHostTime: UInt64? { firstHostTime.current }
+
+    /// Call before audio arrives; see `continuation`.
+    func continueFile(endingAt fileEnd: Double, zeroHost: Double) {
+        continuation.withLock { $0 = (fileEnd, zeroHost) }
+    }
 
     /// Wait until everything queued so far has been processed.
     func drain() async {

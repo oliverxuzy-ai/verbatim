@@ -184,6 +184,23 @@ struct MenuBarView: View {
                 Text("Online or in person: automatic")
                     .font(Theme.captionFont).foregroundStyle(Theme.textTertiary)
             }
+            if let recent = model.recentlyStopped {
+                Button {
+                    model.continueRecording(recent.id)
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "play.circle")
+                        Text("Continue \u{201C}\(recent.meeting.title)\u{201D}").lineLimit(1)
+                        Spacer(minLength: 4)
+                        if let ended = recent.endedAt {
+                            Text("stopped \(ended.timeString)").foregroundStyle(Theme.textTertiary)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.v(.secondary, .small))
+                .help("Record more into this meeting. The new part is added after where it stopped.")
+            }
             HStack(spacing: 8) {
                 Button {
                     model.startRecording(meeting: selected ?? .adHoc(), language: language)
