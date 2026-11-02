@@ -14,15 +14,19 @@ final class MeetingReminder: NSObject, UNUserNotificationCenterDelegate {
     nonisolated private static let keepRecordingAction = "dev.verbatim.keep-recording"
     nonisolated private static let autoStopID = "dev.verbatim.auto-stop"
     nonisolated private static let autoStoppedID = "dev.verbatim.auto-stopped"
+    nonisolated private static let autoStoppedCategory = "dev.verbatim.auto-stopped"
+    nonisolated private static let continueRecordingAction = "dev.verbatim.continue-recording"
 
     func start() {
         let center = UNUserNotificationCenter.current()
         center.delegate = self
         let transcribe = UNNotificationAction(identifier: Self.transcribeAction, title: "Transcribe", options: [.foreground])
         let keep = UNNotificationAction(identifier: Self.keepRecordingAction, title: "Keep recording", options: [])
+        let resume = UNNotificationAction(identifier: Self.continueRecordingAction, title: "Continue recording", options: [])
         center.setNotificationCategories([
             UNNotificationCategory(identifier: Self.category, actions: [transcribe], intentIdentifiers: []),
             UNNotificationCategory(identifier: Self.autoStopCategory, actions: [keep], intentIdentifiers: []),
+            UNNotificationCategory(identifier: Self.autoStoppedCategory, actions: [resume], intentIdentifiers: []),
         ])
         task?.cancel()
         task = Task { [weak self] in
@@ -85,10 +89,14 @@ final class MeetingReminder: NSObject, UNUserNotificationCenterDelegate {
         center.add(UNNotificationRequest(identifier: Self.autoStopID, content: content, trigger: nil))
     }
 
-    func autoStopped(title: String, reason: MeetingEndDetector.Reason) {
+    /// The recording stopped on its own; "Continue recording" picks it up
+    /// again if the meeting is in fact still going.
+    func autoStopped(title: String, reason: MeetingEndDetector.Reason, recordingID: UUID) {
         let content = UNMutableNotificationContent()
         content.title = "Stopped recording \(title)"
         content.body = "\(reason.message) The transcript is saved."
+        content.categoryIdentifier = Self.autoStoppedCategory
+        content.userInfo = ["recordingID": recordingID.uuidString]
         content.sound = nil
         let center = UNUserNotificationCenter.current()
         center.removeDeliveredNotifications(withIdentifiers: [Self.autoStopID])
@@ -107,6 +115,15 @@ final class MeetingReminder: NSObject, UNUserNotificationCenterDelegate {
             await MainActor.run {
                 guard let model = self.model else { return }
                 if keep { model.session?.keepRecording() } else { model.windows.showMain() }
+            }
+            return
+        }
+        if response.notification.request.content.categoryIdentifier == Self.autoStoppedCategory {
+            let resume = response.actionIdentifier == Self.continueRecordingAction
+            let id = (response.notification.request.content.userInfo["recordingID"] as? String).flatMap(UUID.init(uuidString:))
+            await MainActor.run {
+                guard let model = self.model else { return }
+                if resume, let id { model.continueRecording(id) } else { model.windows.showMain() }
             }
             return
         }

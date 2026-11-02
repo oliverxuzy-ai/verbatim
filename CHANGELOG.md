@@ -4,6 +4,17 @@ Notable changes to Verbatim. Each release ships as a DMG on the
 [Releases](https://github.com/oliverxuzy-ai/verbatim/releases) page; the full
 release notes (in Chinese) are in [`release-notes/`](release-notes/).
 
+## [Unreleased]
+
+### Added
+- "Continue recording" on a finished meeting: in the meeting's top bar, in
+  the menu bar for a meeting that stopped in the last two hours, and on the
+  "stopped automatically" toast and notification. The new part is added to
+  the same transcript and audio, right after where it stopped; the break in
+  between isn't recorded and isn't counted in the duration. A line in the
+  transcript marks where it continued. The whole meeting is refined again
+  when it stops.
+
 ## [0.5.1] - 2026-10-22
 
 ### Fixed

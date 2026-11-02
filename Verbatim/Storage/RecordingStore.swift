@@ -34,17 +34,25 @@ final class RecordingStore {
         folder(for: id).appendingPathComponent("\(channel.rawValue).caf")
     }
 
-    /// Compress a finished recording's live audio files.
+    /// Compress a finished recording's live audio files. A continued
+    /// recording's new part is appended to the audio already saved.
     nonisolated static func finalizeAudio(in folder: URL) {
         for channel in AudioChannel.allCases {
             let caf = folder.appendingPathComponent("\(channel.rawValue).caf")
             guard FileManager.default.fileExists(atPath: caf.path) else { continue }
+            let m4a = folder.appendingPathComponent("\(channel.rawValue).m4a")
             do {
-                try AudioFileSink.compress(caf, to: folder.appendingPathComponent("\(channel.rawValue).m4a"))
+                let saved = hasSavedAudio(m4a) ? [m4a] : []
+                try AudioFileSink.compress(saved + [caf], to: m4a)
             } catch {
                 Log.audio.error("Compressing \(caf.lastPathComponent) failed: \(error.localizedDescription)")
             }
         }
+    }
+
+    /// Whether a channel already has audio saved (a valid file with frames).
+    nonisolated static func hasSavedAudio(_ url: URL) -> Bool {
+        FileManager.default.fileExists(atPath: url.path) && AudioFileSink.seconds(url) > 0
     }
 
     /// Recordings interrupted by a crash, a force quit or a hang: add what
@@ -56,14 +64,17 @@ final class RecordingStore {
         var recovered: [Recording] = []
         for var rec in recordings where rec.endedAt == nil && rec.id != liveID {
             let folder = folder(for: rec.id)
-            let caf = liveAudioURL(for: rec.id, channel: .mic)
-            let seconds = (try? AVAudioFile(forReading: caf)).map { Double($0.length) / $0.processingFormat.sampleRate }
-            let merged = JournalRecovery.merge(TranscriptJournal.read(in: folder), into: rec, myName: myName)
+            // A continued recording: channels that had audio before the
+            // continue keep their file offsets (see ContinuationPlan).
+            let saved: Set<AudioChannel> = rec.continuations == nil ? [] : Set(AudioChannel.allCases.filter { Self.hasSavedAudio(audioURL(for: rec.id, channel: $0)) })
+            let merged = JournalRecovery.merge(TranscriptJournal.read(in: folder), into: rec, myName: myName, savedChannels: saved)
             rec = merged.recording
             Self.finalizeAudio(in: folder)
-            let audioEnd = seconds.map { $0 + (rec.channelOffsets?[AudioChannel.mic.rawValue] ?? 0) } ?? 0
+            // The mic file covers the whole timeline (also across a continue).
+            let mic = audioURL(for: rec.id, channel: .mic)
+            let audioEnd = Self.hasSavedAudio(mic) ? AudioFileSink.seconds(mic) + (rec.channelOffsets?[AudioChannel.mic.rawValue] ?? 0) : 0
             let lastLine = rec.segments.map(\.end).max() ?? 0
-            rec.endedAt = rec.startedAt.addingTimeInterval(max(audioEnd, lastLine))
+            rec.endedAt = rec.startedAt.addingTimeInterval(rec.unrecordedTime + max(audioEnd, lastLine))
             let note = merged.replayed > 0
                 ? "Verbatim quit unexpectedly while recording. The transcript was restored from the autosave plus \(merged.replayed) lines from the crash journal."
                 : "Verbatim quit unexpectedly while recording. The transcript was restored from the autosave."

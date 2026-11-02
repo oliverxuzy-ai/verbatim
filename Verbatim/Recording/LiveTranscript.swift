@@ -18,6 +18,9 @@ final class LiveTranscript {
         var fallbackLabel: String
     }
 
+    /// Namespace for engine and diarizer labels, so a continued recording's
+    /// new voices don't land on the old part's speakers (ContinuationPlan).
+    var labelPrefix = ""
     private var configs: [AudioChannel: ChannelConfig] = [:]
     private var pending: [(channel: AudioChannel, result: EngineResult, receivedAt: Date)] = []
     private let myName: String
@@ -161,7 +164,7 @@ final class LiveTranscript {
 
     func speakerKey(_ channel: AudioChannel, label: String?) -> String {
         if channel == .mic, configs[.mic]?.fixedSpeaker != nil { return Speaker.meID }
-        return "\(channel.rawValue):\(label ?? "0")"
+        return "\(channel.rawValue):\(labelPrefix)\(label ?? "0")"
     }
 
     private func lastSpeaker(on channel: AudioChannel) -> String? {
@@ -177,7 +180,11 @@ final class LiveTranscript {
         }
         let sameChannel = recording.speakers.filter { $0.id.hasPrefix(channel.rawValue + ":") }.count
         let base = configs[channel]?.fallbackLabel ?? "Speaker"
-        var speaker = Speaker(id: key, name: "\(base) \(sameChannel + 1)", colorIndex: index)
+        // Next free number: after a merge or a continue, "count + 1" can
+        // already be taken.
+        var number = sameChannel + 1
+        while recording.speakers.contains(where: { $0.name == "\(base) \(number)" }) { number += 1 }
+        var speaker = Speaker(id: key, name: "\(base) \(number)", colorIndex: index)
 
         // 1:1 meeting: the only remote voice is almost certainly the one
         // other attendee. Suggest it; the user confirms later.

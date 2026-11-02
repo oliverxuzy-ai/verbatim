@@ -54,8 +54,19 @@ final class RecordingSession {
     private var ticker: Task<Void, Never>?
     /// Off-main log of every engine result, for recovery after a crash or hang.
     private var journal: TranscriptJournal?
+    /// Host time (seconds) of recording time zero. When continuing, that is
+    /// before this session started, by the length already recorded.
     private var sessionStartHost: Double = 0
     private var tickCount = 0
+    /// The finished recording being continued, as it was before (nil for a
+    /// new recording), and how the new part lines up with it.
+    private let continuing: Recording?
+    private var plan: ContinuationPlan?
+    /// True once audio capture is running.
+    private var captureStarted = false
+    /// A continue that was stopped before any audio was captured: the
+    /// recording was left exactly as it was.
+    private(set) var discarded = false
 
     init(meeting: MeetingInfo, language: String, micMode: MicMode, settings: AppSettings, store: RecordingStore) {
         self.settings = settings
@@ -68,7 +79,25 @@ final class RecordingSession {
             engine: settings.engine.rawValue, micMode: micMode
         )
         self.transcript = LiveTranscript(recording: recording, myName: settings.myName)
+        self.continuing = nil
     }
+
+    /// Continue a finished recording: new audio and transcript are appended
+    /// to the same meeting, on the same timeline (see ContinuationPlan).
+    init(continuing recording: Recording, settings: AppSettings, store: RecordingStore) {
+        self.settings = settings
+        self.store = store
+        // Same engine, language and mic mode as the rest of the meeting, so
+        // refine treats the whole recording the same way.
+        self.engineKind = EngineKind(rawValue: recording.engine) ?? settings.engine
+        self.language = recording.language
+        self.micMode = recording.micMode
+        self.transcript = LiveTranscript(recording: recording, myName: settings.myName)
+        self.continuing = recording
+        transcript.labelPrefix = ContinuationPlan.labelPrefix(for: recording)
+    }
+
+    var isContinuation: Bool { continuing != nil }
 
     var recordingID: UUID { transcript.recording.id }
     var elapsed: TimeInterval { phase == .recording || phase == .stopping ? Date.now.timeIntervalSince(startDate) : 0 }
@@ -87,10 +116,12 @@ final class RecordingSession {
         } catch is CancellationError {
             teardownCaptures()
             journal?.discard()
+            dropAbandonedContinuationAudio()
         } catch {
             Log.app.error("Recording failed to start: \(error.localizedDescription)")
             teardownCaptures()
             journal?.discard()
+            dropAbandonedContinuationAudio()
             if phase != .stopping && phase != .finished { phase = .failed(error.localizedDescription) }
         }
     }
@@ -102,6 +133,9 @@ final class RecordingSession {
                 throw TranscriberError.server("Microphone access is off. Enable it in System Settings → Privacy & Security → Microphone.")
             }
         }
+
+        let id = transcript.recording.id
+        if continuing != nil { try await prepareContinuation(id) }
 
         let meeting = transcript.recording.meeting
         let terms = VocabularyBuilder.terms(meeting: meeting, userTerms: settings.vocabularyTerms, myName: settings.myName)
@@ -140,7 +174,6 @@ final class RecordingSession {
             fallbackLabel: "Speaker"
         ))
 
-        let id = transcript.recording.id
         try FileManager.default.createDirectory(at: store.folder(for: id), withIntermediateDirectories: true)
         journal = TranscriptJournal(folder: store.folder(for: id))
 
@@ -160,9 +193,17 @@ final class RecordingSession {
         pipelines = [.mic: micPipe, .system: systemPipe]
 
         phase = .preparing("Starting audio…")
-        sessionStartHost = AudioFormats.nowHostSeconds
-        startDate = .now
-        transcript.recording.startedAt = startDate
+        let base = plan?.base ?? 0
+        let captureStart = Date.now
+        sessionStartHost = AudioFormats.nowHostSeconds - base
+        startDate = captureStart.addingTimeInterval(-base)
+        if let plan {
+            for (channel, end) in plan.fileEnds {
+                pipelines[channel]?.continueFile(endingAt: end, zeroHost: sessionStartHost)
+            }
+        } else {
+            transcript.recording.startedAt = startDate
+        }
 
         // Echo cancellation only matters when the mic can hear the speakers.
         let useAEC = settings.echoCancellation && micMode == .solo && !AudioRouting.outputIsHeadphones()
@@ -191,13 +232,45 @@ final class RecordingSession {
         if cancelled { throw CancellationError() }
         try mic.start(voiceProcessing: useAEC) { buffer, host in micPipe.ingest(buffer, hostTime: host) }
         echoCancellationActive = mic.echoCancellationActive
+        captureStarted = true
+        if let plan { transcript.recording = plan.reopened(transcript.recording, at: captureStart) }
 
         store.persist(transcript.recording)
         if settings.autoStopWhenMeetingEnds {
-            endDetector = MeetingEndDetector(start: startDate, scheduledEnd: meeting.scheduledEnd)
+            // Quiet time counts from now, not from the start of the meeting.
+            endDetector = MeetingEndDetector(start: captureStart, scheduledEnd: meeting.scheduledEnd)
         }
         phase = .recording
         startTicker()
+    }
+
+    /// Before continuing: make sure every channel's audio is in its saved
+    /// file (a leftover live file means an earlier stop couldn't compress
+    /// it), then measure where each file ends.
+    private func prepareContinuation(_ id: UUID) async throws {
+        guard let original = continuing else { return }
+        phase = .preparing("Opening the recording…")
+        let folder = store.folder(for: id)
+        await Task.detached(priority: .userInitiated) { RecordingStore.finalizeAudio(in: folder) }.value
+        var saved: [AudioChannel: TimeInterval] = [:]
+        for channel in AudioChannel.allCases {
+            if FileManager.default.fileExists(atPath: store.liveAudioURL(for: id, channel: channel).path) {
+                throw TranscriberError.server("Couldn't open this recording's audio to continue it.")
+            }
+            let url = store.audioURL(for: id, channel: channel)
+            saved[channel] = RecordingStore.hasSavedAudio(url) ? AudioFileSink.seconds(url) : 0
+        }
+        plan = ContinuationPlan(recording: original, savedSeconds: saved)
+    }
+
+    /// A continue that never got going: its live files hold nothing that
+    /// belongs on the timeline (prepareContinuation made sure none were left
+    /// from before), so remove them instead of appending them later.
+    private func dropAbandonedContinuationAudio() {
+        guard continuing != nil, plan != nil, !captureStarted else { return }
+        for channel in AudioChannel.allCases {
+            try? FileManager.default.removeItem(at: store.liveAudioURL(for: recordingID, channel: channel))
+        }
     }
 
     private func makeTranscriber(context: TranscriptionContext, diarize: Bool) throws -> StreamingTranscriber {
@@ -259,6 +332,11 @@ final class RecordingSession {
                 journal?.noteOffset(offset, for: channel)
             }
         }
+    }
+
+    /// Where each channel's audio file starts on the recording timeline.
+    private var fileOffsets: [String: Double] {
+        plan?.fileOffsets(live: transcript.offsets) ?? transcript.offsets
     }
 
     private func startTicker() {
@@ -343,7 +421,7 @@ final class RecordingSession {
     private func autosave() {
         alignOffsets()
         var snapshot = transcript.recording
-        snapshot.channelOffsets = transcript.offsets
+        snapshot.channelOffsets = fileOffsets
         store.persistInBackground(snapshot)
     }
 
@@ -393,12 +471,28 @@ final class RecordingSession {
         _ = try? await withTimeout(10) { for task in tasks { await task.value } }
         updateContinuations = []
         updateTasks = []
+        // Continue stopped before any audio: leave the recording as it was.
+        if let original = continuing, !captureStarted {
+            journal?.discard()
+            dropAbandonedContinuationAudio()
+            transcript.recording = original
+            store.save(original)
+            discarded = true
+            phase = .finished
+            return original
+        }
         alignOffsets()
         transcript.finalizeLive()
         var recording = transcript.recording
         recording.endedAt = .now
-        recording.channelOffsets = transcript.offsets
-        recording.diagnostics = warnings.isEmpty ? nil : warnings
+        recording.channelOffsets = fileOffsets
+        if continuing == nil {
+            recording.diagnostics = warnings.isEmpty ? nil : warnings
+        } else if !warnings.isEmpty {
+            var all = recording.diagnostics ?? []
+            for w in warnings where !all.contains(w) { all.append(w) }
+            recording.diagnostics = all
+        }
         transcript.recording = recording
         let folder = store.folder(for: recording.id)
         await Task.detached(priority: .userInitiated) { RecordingStore.finalizeAudio(in: folder) }.value

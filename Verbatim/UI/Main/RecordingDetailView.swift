@@ -229,6 +229,13 @@ struct RecordingDetailView: View {
     @ViewBuilder
     private func actions(_ rec: Recording) -> some View {
         HStack(spacing: 8) {
+            if model.canContinue(rec) {
+                Button { model.continueRecording(rec.id) } label: {
+                    Label("Continue recording", systemImage: "record.circle")
+                }
+                .buttonStyle(.vSecondary)
+                .help("Record more into this meeting. The new part is added after where it stopped.")
+            }
             Button {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(TranscriptFormatter.plainText(rec), forType: .string)
@@ -376,16 +383,25 @@ struct RecordingDetailView: View {
                         .frame(height: 240)
                     }
                     ForEach(Array(segments.enumerated()), id: \.element.id) { index, segment in
-                        TranscriptRow(
-                            model: model, recordingID: recordingID, recording: rec, segment: segment,
-                            isPlaying: player.playingSegment == segment.id,
-                            showSpeaker: showSpeaker(segment, in: segments)
-                        ) {
-                            player.toggle(segment: segment, in: rec, url: model.store.audioURL(for: rec.id, channel: segment.channel))
+                        VStack(alignment: .leading, spacing: 0) {
+                            if let continuation = continuationPoint(before: index, in: segments, rec) {
+                                ContinuationDivider(continuation: continuation)
+                            }
+                            TranscriptRow(
+                                model: model, recordingID: recordingID, recording: rec, segment: segment,
+                                isPlaying: player.playingSegment == segment.id,
+                                showSpeaker: showSpeaker(segment, in: segments)
+                            ) {
+                                player.toggle(segment: segment, in: rec, url: model.store.audioURL(for: rec.id, channel: segment.channel))
+                            }
                         }
                         .id(segment.id)
                         .modifier(Resolve(active: resolving, delay: min(Double(index) * 0.035, 0.9)))
                         .transition(.opacity.combined(with: .offset(y: 6)))
+                    }
+                    // Continued, and nothing said since yet.
+                    if let last = rec.continuations?.last, last.at > (segments.last?.start ?? -1), !segments.isEmpty {
+                        ContinuationDivider(continuation: last)
                     }
                     ForEach(volatile) { segment in
                         TranscriptRow(model: model, recordingID: recordingID, recording: rec, segment: segment,
@@ -428,6 +444,14 @@ struct RecordingDetailView: View {
         }
     }
 
+    /// The "Continue recording" point between this line and the one before.
+    private func continuationPoint(before index: Int, in segments: [Segment], _ rec: Recording) -> Recording.Continuation? {
+        guard let points = rec.continuations, !points.isEmpty else { return nil }
+        let start = segments[index].start
+        let previous = index > 0 ? segments[index - 1].start : -Double.infinity
+        return points.last { $0.at > previous && $0.at <= start }
+    }
+
     private func showSpeaker(_ segment: Segment, in segments: [Segment]) -> Bool {
         guard let i = segments.firstIndex(of: segment), i > 0 else { return true }
         let prev = segments[i - 1]
@@ -446,6 +470,30 @@ private struct Resolve: ViewModifier {
             .blur(radius: active ? 7 : 0)
             .opacity(active ? 0.3 : 1)
             .animation(active ? nil : .easeOut(duration: 0.7).delay(delay), value: active)
+    }
+}
+
+/// Marks where a recording was continued after a stop, and how long the
+/// break in between was (not recorded).
+private struct ContinuationDivider: View {
+    let continuation: Recording.Continuation
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Rectangle().fill(Theme.border).frame(height: Theme.hairline)
+            Label(text, systemImage: "record.circle")
+                .font(Theme.captionFont)
+                .foregroundStyle(Theme.textTertiary)
+                .fixedSize()
+            Rectangle().fill(Theme.border).frame(height: Theme.hairline)
+        }
+        .padding(.vertical, 12)
+    }
+
+    private var text: String {
+        let minutes = Int((continuation.gap / 60).rounded())
+        let gap = minutes < 1 ? "under a minute" : minutes < 60 ? "\(minutes) min" : "\(minutes / 60) h \(minutes % 60) min"
+        return "Recording continued \u{00B7} \(gap) not recorded"
     }
 }
 

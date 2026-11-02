@@ -189,23 +189,77 @@ nonisolated final class AudioFileSink: @unchecked Sendable {
     /// Re-encode a recording to Apple Lossless (16 kHz mono, about 60 MB/h)
     /// and remove the source on success.
     static func compress(_ source: URL, to destination: URL) throws {
-        let input = try AVAudioFile(forReading: source)
+        try compress([source], to: destination)
+    }
+
+    /// Re-encode several files back to back into one Apple Lossless file.
+    /// `destination` may itself be the first source (a continued recording:
+    /// saved audio + the new part); the other sources are removed on success.
+    static func compress(_ sources: [URL], to destination: URL) throws {
+        guard let first = sources.first else { return }
+        let format = try AVAudioFile(forReading: first).processingFormat
         let settings: [String: Any] = [
             AVFormatIDKey: kAudioFormatAppleLossless,
-            AVSampleRateKey: input.processingFormat.sampleRate,
+            AVSampleRateKey: format.sampleRate,
             AVNumberOfChannelsKey: 1,
             AVEncoderBitDepthHintKey: 16,
         ]
-        try? FileManager.default.removeItem(at: destination)
-        let output = try AVAudioFile(forWriting: destination, settings: settings, commonFormat: .pcmFormatFloat32, interleaved: false)
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: input.processingFormat, frameCapacity: 64_000) else { return }
-        while input.framePosition < input.length {
-            try input.read(into: buffer, frameCount: 64_000)
-            guard buffer.frameLength > 0 else { break }
-            try output.write(from: buffer)
+        // Write next to the destination, then swap it in, so a failure
+        // never leaves a half-written file where the audio was.
+        let partial = destination.deletingLastPathComponent()
+            .appendingPathComponent(".\(destination.deletingPathExtension().lastPathComponent).partial.m4a")
+        try? FileManager.default.removeItem(at: partial)
+        do {
+            let output = try AVAudioFile(forWriting: partial, settings: settings, commonFormat: .pcmFormatFloat32, interleaved: false)
+            for source in sources {
+                let input = try AVAudioFile(forReading: source)
+                guard input.processingFormat.sampleRate == format.sampleRate,
+                      input.processingFormat.channelCount == format.channelCount,
+                      let buffer = AVAudioPCMBuffer(pcmFormat: input.processingFormat, frameCapacity: 64_000) else {
+                    throw CoreAudioError.status("Joining \(source.lastPathComponent) (format differs)", -1)
+                }
+                while input.framePosition < input.length {
+                    try input.read(into: buffer, frameCount: 64_000)
+                    guard buffer.frameLength > 0 else { break }
+                    try output.write(from: buffer)
+                }
+            }
+            output.close()
+        } catch {
+            try? FileManager.default.removeItem(at: partial)
+            throw error
         }
-        output.close()
-        try FileManager.default.removeItem(at: source)
+        if FileManager.default.fileExists(atPath: destination.path) {
+            _ = try FileManager.default.replaceItemAt(destination, withItemAt: partial)
+        } else {
+            try FileManager.default.moveItem(at: partial, to: destination)
+        }
+        for source in sources where source.standardizedFileURL != destination.standardizedFileURL {
+            try FileManager.default.removeItem(at: source)
+        }
+    }
+
+    /// Seconds of audio in a file; 0 when it is missing or unreadable.
+    static func seconds(_ url: URL) -> Double {
+        guard let file = try? AVAudioFile(forReading: url), file.processingFormat.sampleRate > 0 else { return 0 }
+        return Double(file.length) / file.processingFormat.sampleRate
+    }
+
+    /// Append `seconds` of silence (used to keep a continued recording's
+    /// file on one timeline across the time it took the new audio to start).
+    func writeSilence(_ seconds: Double) {
+        guard seconds > 0, let file else { return }
+        var frames = AVAudioFrameCount((seconds * file.processingFormat.sampleRate).rounded())
+        guard frames > 0, let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 16_000) else { return }
+        while frames > 0 {
+            let n = min(frames, 16_000)
+            buffer.frameLength = n
+            for ch in 0..<Int(buffer.format.channelCount) {
+                buffer.floatChannelData?[ch].update(repeating: 0, count: Int(n))
+            }
+            write(buffer)
+            frames -= n
+        }
     }
 }
 

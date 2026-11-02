@@ -158,7 +158,10 @@ nonisolated final class TranscriptJournal: @unchecked Sendable {
 enum JournalRecovery {
     /// The recording with the missing lines added, and how many engine
     /// results were replayed.
-    static func merge(_ entries: [TranscriptJournal.Entry], into recording: Recording, myName: String) -> (recording: Recording, replayed: Int) {
+    /// `savedChannels`: for a continued recording, the channels whose file
+    /// already had audio before the continue; they keep their file offset.
+    static func merge(_ entries: [TranscriptJournal.Entry], into recording: Recording, myName: String,
+                      savedChannels: Set<AudioChannel> = []) -> (recording: Recording, replayed: Int) {
         guard !entries.isEmpty else { return (recording, 0) }
 
         var offsets: [AudioChannel: Double] = [:]
@@ -167,6 +170,7 @@ enum JournalRecovery {
 
         let soniox = recording.engine == EngineKind.soniox.rawValue
         let live = LiveTranscript(recording: recording, myName: myName)
+        live.labelPrefix = ContinuationPlan.livePrefix(of: recording)
         live.configure(.mic, .init(
             offset: offsets[.mic] ?? 0,
             fixedSpeaker: recording.micMode == .solo ? Speaker.meID : nil,
@@ -219,6 +223,9 @@ enum JournalRecovery {
         var out = live.recording
         if !offsets.isEmpty {
             out.channelOffsets = Dictionary(uniqueKeysWithValues: offsets.map { ($0.key.rawValue, $0.value) })
+            for channel in savedChannels {
+                out.channelOffsets?[channel.rawValue] = recording.channelOffsets?[channel.rawValue] ?? 0
+            }
         }
         return (out, replayed)
     }

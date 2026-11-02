@@ -30,8 +30,10 @@ final class AppModel {
     private(set) var exportStates: [UUID: ExportState] = [:]
     private(set) var refineStates: [UUID: RefineState] = [:]
     /// Re-entrancy guard for refine, separate from the displayed state
-    /// (postProcess shows "running" before it calls refine).
-    private var refining: Set<UUID> = []
+    /// (postProcess shows "running" before it calls refine). Holds the end
+    /// time of the version being refined: after "Continue recording" a newer
+    /// version can need refining while the old pass is still running.
+    private var refining: [UUID: Date] = [:]
 
     enum RefineState: Equatable {
         case running(String)
@@ -115,17 +117,47 @@ final class AppModel {
         guard !isRecording else { return }
         lastError = nil
         let mode = MicMode.solo
-        let session = RecordingSession(
+        run(RecordingSession(
             meeting: meeting,
             language: language ?? settings.language,
             micMode: mode,
             settings: settings,
             store: store
-        )
+        ))
+    }
+
+    /// Whether "Continue recording" is offered: any finished recording,
+    /// while nothing else is recording.
+    func canContinue(_ recording: Recording) -> Bool {
+        !isRecording && recording.endedAt != nil
+    }
+
+    /// The latest recording if it stopped recently enough that its meeting
+    /// may still be going (offered in the menu bar).
+    var recentlyStopped: Recording? {
+        guard !isRecording, let latest = store.recordings.first, let ended = latest.endedAt,
+              Date.now.timeIntervalSince(ended) < 2 * 3600 else { return nil }
+        return latest
+    }
+
+    /// Record more into a finished meeting (stopped too early, or stopped
+    /// automatically while it was still going). The new part is appended
+    /// to the same transcript and audio, and the whole meeting is refined
+    /// again when it stops.
+    func continueRecording(_ id: UUID) {
+        guard let recording = store.recording(id), canContinue(recording) else { return }
+        lastError = nil
+        refineStates[id] = nil
+        selectedRecordingID = id
+        run(RecordingSession(continuing: recording, settings: settings, store: store))
+    }
+
+    private func run(_ session: RecordingSession) {
         self.session = session
+        let title = session.transcript.recording.meeting.title
         // Forgotten recordings stop on their own once the meeting is over.
         session.onAutoStopPending = { [weak self] reason in
-            self?.reminder.autoStopPending(reason, title: meeting.title)
+            self?.reminder.autoStopPending(reason, title: title)
         }
         session.onMeetingEnded = { [weak self, weak session] reason in
             guard let self, let session, self.session === session else { return }
@@ -147,8 +179,11 @@ final class AppModel {
         let id = session.recordingID
         if let reason {
             let title = session.transcript.recording.meeting.title
-            reminder.autoStopped(title: title, reason: reason)
-            toasts.show(.info, "Recording stopped automatically", detail: "\(reason.message) Everything up to now is saved.")
+            reminder.autoStopped(title: title, reason: reason, recordingID: id)
+            toasts.show(.info, "Recording stopped automatically", detail: "\(reason.message) Everything up to now is saved.",
+                        actionTitle: "Continue recording") { [weak self] in
+                self?.continueRecording(id)
+            }
         }
         // Bring the meeting up right away so it's obvious the recording ended
         // and its notes are being finished.
@@ -159,16 +194,39 @@ final class AppModel {
         Task {
             let recording = await session.stop()
             if self.session === session { self.session = nil }
+            // A continue stopped before it recorded anything changed nothing.
+            if session.discarded {
+                refineStates[id] = nil
+                return
+            }
             await postProcess(recording)
         }
+    }
+
+    /// The recording is being recorded right now.
+    func isLive(_ id: UUID) -> Bool {
+        session?.recordingID == id && session?.isActive == true
+    }
+
+    /// True when the version of a recording that ended at `endedAt` has been
+    /// continued since (it is live again, or stopped again later). Work on
+    /// the old version is then dropped; the new stop does it again.
+    private func continuedSince(_ id: UUID, endedAt: Date?) -> Bool {
+        if isLive(id) { return true }
+        // Saved dates lose their fractions of a second on reload.
+        let now = store.recording(id)?.endedAt
+        if let now, let endedAt { return abs(now.timeIntervalSince(endedAt)) > 1 }
+        return now != endedAt
     }
 
     /// After a recording: name speakers, refine, suggest names, export.
     /// Every step is bounded so the banner can never spin forever.
     func postProcess(_ recording: Recording) async {
         let id = recording.id
+        let endedAt = recording.endedAt
         refineStates[id] = .running("Recognizing voices…")
         var named = (try? await withTimeout(90) { await self.identifySpeakers(recording) }) ?? recording
+        if continuedSince(id, endedAt: endedAt) { return }
         named = CalendarRules.apply(named, myName: settings.myName)
         let willRefine = settings.autoRefine && canRefine(named)
         if !willRefine {
@@ -176,16 +234,28 @@ final class AppModel {
             let toName = named
             named = (try? await withTimeout(150) { await self.suggestNamesWithClaude(toName) }) ?? named
         }
+        if continuedSince(id, endedAt: endedAt) { return }
         store.save(named)
         if willRefine {
             await refine(id)
         } else {
             refineStates[id] = .done
         }
+        if continuedSince(id, endedAt: endedAt) { return }
         if let latest = store.recording(id) {
             _ = try? await withTimeout(120) { await self.learnVoices(from: latest) }
         }
-        if allowsCloud, settings.autoExportOnStop, settings.hasNotionToken { await export(id) }
+        if continuedSince(id, endedAt: endedAt) { return }
+        guard allowsCloud, settings.autoExportOnStop, settings.hasNotionToken else { return }
+        if recording.notionPageURL == nil {
+            await export(id)
+        } else {
+            // Continued after it was exported: don't add a second page on
+            // its own; offer to export the whole meeting again.
+            toasts.show(.info, "Notion has the earlier part only", detail: recording.meeting.title, actionTitle: "Export again") { [weak self] in
+                Task { await self?.export(id) }
+            }
+        }
     }
 
     /// The recording to display: the live one if it is selected.
@@ -275,9 +345,16 @@ final class AppModel {
     }
 
     func refine(_ id: UUID) async {
-        guard let original = store.recording(id), canRefine(original), !refining.contains(id) else { return }
-        refining.insert(id)
-        defer { refining.remove(id) }
+        guard let requested = store.recording(id), canRefine(requested), !isLive(id) else { return }
+        // A refine of the part before "Continue recording" may still be
+        // running; it drops its result when it sees that. Wait for it.
+        while let running = refining[id] {
+            if let ended = requested.endedAt, abs(running.timeIntervalSince(ended)) <= 1 { return } // already refining this version
+            try? await Task.sleep(for: .milliseconds(500))
+        }
+        guard let original = store.recording(id), canRefine(original), !isLive(id), let endedAt = original.endedAt else { return }
+        refining[id] = endedAt
+        defer { refining[id] = nil }
         refineStates[id] = .running("Preparing…")
         let terms = VocabularyBuilder.terms(meeting: original.meeting, userTerms: settings.vocabularyTerms, myName: settings.myName)
         do {
@@ -285,15 +362,21 @@ final class AppModel {
                 original, store: store, myName: settings.myName, terms: terms,
                 retranscribe: original.engine == EngineKind.apple.rawValue
             ) { [weak self] message in
-                Task { @MainActor in self?.refineStates[id] = .running(message) }
+                Task { @MainActor in
+                    guard let self, !self.continuedSince(id, endedAt: endedAt) else { return }
+                    self.refineStates[id] = .running(message)
+                }
             }
+            if continuedSince(id, endedAt: endedAt) { return }
             refineStates[id] = .running("Recognizing voices…")
             let separated = refined
             refined = (try? await withTimeout(90) { await self.identifySpeakers(separated) }) ?? refined
+            if continuedSince(id, endedAt: endedAt) { return }
             refined = CalendarRules.apply(refined, myName: settings.myName)
             refineStates[id] = .running("Suggesting names…")
             let toName = refined
             refined = (try? await withTimeout(150) { await self.suggestNamesWithClaude(toName) }) ?? refined
+            if continuedSince(id, endedAt: endedAt) { return }
             // Keep anything the user changed meanwhile (title, export link).
             if let latest = store.recording(id) {
                 refined.meeting = latest.meeting
@@ -304,9 +387,11 @@ final class AppModel {
             refineStates[id] = .done
             toasts.show(.success, "Transcript refined", detail: "Re-transcribed with whole-meeting speaker separation")
         } catch RefineError.noAudio {
+            if continuedSince(id, endedAt: endedAt) { return }
             refineStates[id] = .failed("No speech was detected in this recording.")
         } catch {
             Log.asr.error("Refine failed: \(error.localizedDescription)")
+            if continuedSince(id, endedAt: endedAt) { return }
             refineStates[id] = .failed(error.localizedDescription)
         }
     }
