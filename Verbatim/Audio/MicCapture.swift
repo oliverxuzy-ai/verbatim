@@ -83,8 +83,13 @@ nonisolated final class MicCapture: @unchecked Sendable {
             try? engine.inputNode.setVoiceProcessingEnabled(false)
             voiceProcessingOn = false
         }
-        // Headphones now? Then echo cancellation is no longer needed.
-        try? start(voiceProcessing: echoCancellationRequested && !AudioRouting.outputIsHeadphones(), handler: handler)
+        // Headphones now? Then echo cancellation is no longer needed. And a
+        // call holding the mic would drop out while voice processing takes it.
+        let callHoldsMic = AudioRouting.otherProcessCapturingInput() != nil
+        if echoCancellationRequested && callHoldsMic {
+            Log.audio.notice("Skipping voice processing on restart: another app is using the microphone")
+        }
+        try? start(voiceProcessing: echoCancellationRequested && !callHoldsMic && !AudioRouting.outputIsHeadphones(), handler: handler)
     }
 
     func stop() {

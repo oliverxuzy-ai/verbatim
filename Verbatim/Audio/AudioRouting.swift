@@ -18,6 +18,29 @@ nonisolated enum AudioRouting {
         return false
     }
 
+    /// The pid of another app that is capturing audio input right now (the
+    /// browser or app running the call), or nil when nobody else is.
+    /// Turning on voice processing reconfigures the shared built-in mic: the
+    /// other app's stream is stopped and restarted and the mic's hardware
+    /// processing switches mode, so the other side hears you drop out or go
+    /// quiet for a few seconds. Callers skip voice processing when this is set.
+    static func otherProcessCapturingInput() -> pid_t? {
+        let system = AudioObjectID(kAudioObjectSystemObject)
+        var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyProcessObjectList, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(system, &address, 0, nil, &size) == noErr, size > 0 else { return nil }
+        var processes = [AudioObjectID](repeating: kAudioObjectUnknown, count: Int(size) / MemoryLayout<AudioObjectID>.size)
+        guard AudioObjectGetPropertyData(system, &address, 0, nil, &size, &processes) == noErr else { return nil }
+        let me = ProcessInfo.processInfo.processIdentifier
+        for process in processes {
+            let capturing: UInt32 = property(process, kAudioProcessPropertyIsRunningInput, scope: kAudioObjectPropertyScopeGlobal) ?? 0
+            guard capturing != 0 else { continue }
+            let pid: pid_t = property(process, kAudioProcessPropertyPID, scope: kAudioObjectPropertyScopeGlobal) ?? -1
+            if pid > 0, pid != me { return pid }
+        }
+        return nil
+    }
+
     static func defaultOutputDevice() -> AudioObjectID? {
         let id: AudioObjectID? = property(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDefaultOutputDevice, scope: kAudioObjectPropertyScopeGlobal)
         return id == kAudioObjectUnknown ? nil : id
