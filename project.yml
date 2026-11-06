@@ -38,8 +38,8 @@ targets:
       properties:
         CFBundleDisplayName: Verbatim
         CFBundleName: Verbatim
-        CFBundleShortVersionString: "0.5.1"
-        CFBundleVersion: "7"
+        CFBundleShortVersionString: "0.6.0"
+        CFBundleVersion: "8"
         LSApplicationCategoryType: public.app-category.productivity
         LSUIElement: true
         NSHumanReadableCopyright: ""
