@@ -4,9 +4,14 @@ Notable changes to Verbatim. Each release ships as a DMG on the
 [Releases](https://github.com/oliverxuzy-ai/verbatim/releases) page; the full
 release notes (in Chinese) are in [`release-notes/`](release-notes/).
 
-## [Unreleased]
+## [0.6.0] - 2026-11-06
 
 ### Added
+- Verbatim updates itself. It checks GitHub Releases every 6 hours,
+  downloads a new version in the background, verifies it, and restarts into
+  it when you aren't recording or using it. "Update to x" in the menu bar
+  installs it right away. Settings → General → Updates turns it off or
+  checks by hand. Works when Verbatim runs from the Applications folder.
 - "Continue recording" on a finished meeting: in the meeting's top bar, in
   the menu bar for a meeting that stopped in the last two hours, and on the
   "stopped automatically" toast and notification. The new part is added to
@@ -14,6 +19,13 @@ release notes (in Chinese) are in [`release-notes/`](release-notes/).
   between isn't recorded and isn't counted in the duration. A line in the
   transcript marks where it continued. The whole meeting is refined again
   when it stops.
+
+### Fixed
+- A crash, force quit or hang while recording no longer loses the
+  transcript. Every recognized line is written to disk as it arrives, the
+  recording autosaves every 5 seconds, and on the next launch Verbatim
+  restores the interrupted meeting and offers Refine to rebuild the rest
+  from the audio.
 
 ## [0.5.1] - 2026-10-22
 
