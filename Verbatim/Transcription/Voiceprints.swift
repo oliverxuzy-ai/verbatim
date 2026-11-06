@@ -116,10 +116,11 @@ nonisolated enum VoiceEmbedding {
     }
 
     /// Clean spans for one speaker: their own segments, 2.5–12 s long, not
-    /// overlapping anyone else (±0.3 s), longest first.
-    static func cleanSpans(for speakerID: String, in recording: Recording, limit: Int = 4) -> [(AudioChannel, Double, Double)] {
+    /// overlapping anyone else (±0.3 s), longest first. `channel` limits them
+    /// to one channel.
+    static func cleanSpans(for speakerID: String, in recording: Recording, channel: AudioChannel? = nil, limit: Int = 4) -> [(AudioChannel, Double, Double)] {
         let all = recording.visibleSegments
-        let mine = all.filter { $0.speakerID == speakerID && $0.end - $0.start >= 2.5 }
+        let mine = all.filter { $0.speakerID == speakerID && $0.end - $0.start >= 2.5 && (channel == nil || $0.channel == channel) }
         let clean = mine.filter { seg in
             !all.contains { $0.speakerID != speakerID && $0.channel == seg.channel && $0.end > seg.start - 0.3 && $0.start < seg.end + 0.3 }
         }
@@ -167,7 +168,11 @@ final class VoiceprintStore {
     /// Learn (or refine) a person's voice from a confirmed speaker.
     func learn(speaker: Speaker, in recording: Recording, store: RecordingStore, id: String? = nil, displayName: String? = nil) async {
         guard !speaker.name.trimmed.isEmpty, !speaker.name.hasPrefix("Speaker "), !speaker.name.hasPrefix("In room ") else { return }
-        let spans = VoiceEmbedding.cleanSpans(for: speaker.id, in: recording)
+        let key = id ?? Voiceprint.key(name: speaker.name, email: speaker.email)
+        // Your own voice is learned from your mic only: refine can now give
+        // you lines from the call audio (a room system sending you back),
+        // and codec-degraded call audio blurred the voiceprint.
+        let spans = VoiceEmbedding.cleanSpans(for: speaker.id, in: recording, channel: key == Self.meID ? .mic : nil)
         guard let channel = spans.first?.0 else { return }
         let url = store.audioURL(for: recording.id, channel: channel)
         guard FileManager.default.fileExists(atPath: url.path) else { return }
@@ -175,7 +180,6 @@ final class VoiceprintStore {
         let fileSpans = spans.filter { $0.0 == channel }.map { ($0.1 - offset, $0.2 - offset) }
         guard let vector = try? await VoiceEmbedding.embedding(url: url, spans: fileSpans) else { return }
 
-        let key = id ?? Voiceprint.key(name: speaker.name, email: speaker.email)
         let name = displayName ?? speaker.name
         var vp = voiceprints.first { $0.id == key } ?? Voiceprint(id: key, name: name, email: speaker.email, embeddings: [], updatedAt: .now)
         if vp.backend != VoiceEmbedding.backend.rawValue {
