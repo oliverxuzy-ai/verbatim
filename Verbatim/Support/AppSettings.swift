@@ -62,6 +62,7 @@ final class AppSettings {
     var autoStopWhenMeetingEnds: Bool { didSet { save("autoStopWhenMeetingEnds", autoStopWhenMeetingEnds) } }
     var claudeNaming: Bool { didSet { save("claudeNaming", claudeNaming) } }
     var showInDock: Bool { didSet { save("showInDock", showInDock) } }
+    var autoUpdate: Bool { didSet { save("autoUpdate", autoUpdate) } }
     var hiddenCalendarIDs: [String] { didSet { save("hiddenCalendarIDs", hiddenCalendarIDs) } }
     var hasCompletedOnboarding: Bool { didSet { save("hasCompletedOnboarding", hasCompletedOnboarding) } }
 
@@ -87,6 +88,7 @@ final class AppSettings {
         autoStopWhenMeetingEnds = d.object(forKey: "autoStopWhenMeetingEnds") as? Bool ?? true
         claudeNaming = d.object(forKey: "claudeNaming") as? Bool ?? true
         showInDock = d.object(forKey: "showInDock") as? Bool ?? true
+        autoUpdate = d.object(forKey: "autoUpdate") as? Bool ?? true
         hiddenCalendarIDs = d.stringArray(forKey: "hiddenCalendarIDs") ?? []
         hasCompletedOnboarding = d.bool(forKey: "hasCompletedOnboarding")
         hasNotionToken = Keychain.get(SecretKey.notionToken) != nil

@@ -26,6 +26,8 @@ final class WindowManager: NSObject, NSWindowDelegate {
         present(main)
     }
 
+    var isMainVisible: Bool { main?.isVisible == true }
+
     func showSettings(section: SettingsView.Section? = nil) {
         guard let model else { return }
         if let section { model.settingsSection = section }

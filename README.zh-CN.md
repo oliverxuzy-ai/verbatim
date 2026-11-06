@@ -82,7 +82,7 @@ macOS 菜单栏会议转写工具：实时转写、区分说话人、记住每�
    ```
 4. 按引导页授予下面的权限，可选连接 Google 日历和 Notion。
 
-更新：下载新的 DMG，拖进 Applications 覆盖旧版即可，录音和设置都会保留。
+更新：Verbatim 每天会查几次 GitHub Releases，有新版本就在后台下载，等你没在录音、也没在用它的时候自动重启成新版。可以在「Settings → General → Updates」里关掉，或者手动点「Check now」。录音和设置都会保留。也可以照旧下载新的 DMG 拖进 Applications 覆盖。
 
 ## 系统要求
 
@@ -145,7 +145,7 @@ Verbatim 用你自己的 OAuth 客户端连接 Google 日历，日历数据不�
 | 音频和逐字稿 | 只在你的 Mac 上：`~/Library/Application Support/Verbatim/Recordings/<id>/`（`recording.json`，以及 16 kHz 无损的 `mic.m4a`、`system.m4a`）。 |
 | API key 和 token | 仅当前用户可读的文件 `~/Library/Application Support/Verbatim/secrets.json`（权限 0600）。 |
 | 日历 | 用你自己的 OAuth 客户端直接从 Google 读取。 |
-| 网络 | 只在你用到时：Soniox（选它当引擎时）、Notion（导出时）、Anthropic（填了 key 时），以及一次性的模型下载。 |
+| 网络 | 只在你用到时：Soniox（选它当引擎时）、Notion（导出时）、Anthropic（填了 key 时），以及一次性的模型下载。另外每隔几小时查一次 GitHub 上的最新版本（关掉自动更新就不查）。 |
 
 ## 工作原理
 

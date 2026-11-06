@@ -185,11 +185,66 @@ private struct GeneralSettings: View {
                     }
             }
         }
+        UpdateSettings(model: model)
         SettingsGroup(title: "Storage", footnote: model.store.rootURL.path) {
             SettingsRow(title: "Recordings folder", detail: "Transcripts (JSON) and lossless 16 kHz audio per meeting.", showDivider: false) {
                 Button("Show in Finder") { NSWorkspace.shared.open(model.store.rootURL) }.buttonStyle(.v(.secondary, .small))
             }
         }
+    }
+}
+
+private struct UpdateSettings: View {
+    let model: AppModel
+
+    var body: some View {
+        let updater = model.updater
+        SettingsGroup(title: "Updates", footnote: footnote) {
+            SettingsRow(title: "Install updates automatically",
+                        detail: "Checks GitHub for a new release a few times a day, downloads it in the background, and restarts Verbatim when you aren't recording or using it.") {
+                Toggle("", isOn: Binding(get: { model.settings.autoUpdate }, set: { on in
+                    model.settings.autoUpdate = on
+                    if on { Task { await updater.tick() } }
+                }))
+                .labelsHidden().toggleStyle(.switch)
+            }
+            SettingsRow(title: "Verbatim \(updater.current)", detail: status, showDivider: false) {
+                switch updater.state {
+                case .checking, .downloading, .installing:
+                    ProgressView().controlSize(.small)
+                case .ready:
+                    Button("Restart to update") { updater.act() }.buttonStyle(.v(.primary, .small))
+                        .disabled(model.isRecording)
+                case .available:
+                    Button(updater.canInstall ? "Download" : "Get it on GitHub") { updater.act() }.buttonStyle(.v(.primary, .small))
+                case .idle, .upToDate, .failed:
+                    Button("Check now") { updater.act() }.buttonStyle(.v(.secondary, .small))
+                }
+            }
+        }
+    }
+
+    private var status: String {
+        let updater = model.updater
+        switch updater.state {
+        case .idle:
+            if let checked = updater.lastChecked { return "Last checked \(checked.formatted(.relative(presentation: .named)))." }
+            return "Not checked yet."
+        case .checking: return "Checking for updates…"
+        case .upToDate: return "You're on the latest version."
+        case let .available(u):
+            return updater.canInstall ? "Version \(u.version) is available." : "Version \(u.version) is available. Download it and drag it into Applications."
+        case let .downloading(u): return "Downloading version \(u.version)…"
+        case let .ready(u):
+            return model.isRecording ? "Version \(u.version) is ready. It installs after this recording." : "Version \(u.version) is ready to install."
+        case let .installing(u): return "Installing version \(u.version)…"
+        case let .failed(message): return message
+        }
+    }
+
+    private var footnote: String? {
+        model.updater.canInstall ? nil
+            : "Verbatim can only update itself when it runs from the Applications folder. Move it there to get updates automatically."
     }
 }
 

@@ -18,6 +18,7 @@ final class AppModel {
     let toasts = ToastCenter()
     let panel = FloatingPanelController()
     let reminder = MeetingReminder()
+    let updater = Updater()
     let voiceprints: VoiceprintStore
     /// Off for tests and snapshots: never call cloud APIs or touch the
     /// user's real voiceprints from an isolated model.
@@ -58,6 +59,8 @@ final class AppModel {
         calendar.startAutoRefresh()
         reminder.model = self
         reminder.start()
+        updater.model = self
+        updater.start()
         if settings.meetingReminders, settings.hasCompletedOnboarding {
             Task { _ = await MeetingReminder.requestPermission() }
         }
@@ -70,6 +73,16 @@ final class AppModel {
     }
 
     var isRecording: Bool { session?.isActive == true }
+
+    /// A safe moment to restart for an update: nothing recording, finishing,
+    /// refining or exporting, no meeting starting or under way, and the user
+    /// isn't in Verbatim right now.
+    var isIdleForUpdate: Bool {
+        guard session == nil, refining.isEmpty, calendar.current == nil, !NSApp.isActive else { return false }
+        let busy = refineStates.values.contains { if case .running = $0 { true } else { false } }
+            || exportStates.values.contains(.exporting)
+        return !busy
+    }
 
     /// A recording cut short by a crash, force quit or hang was restored on
     /// launch: show it, and say how to get the full transcript back.
