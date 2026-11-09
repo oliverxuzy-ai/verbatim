@@ -118,15 +118,15 @@ struct SettingsView: View {
         .background(SidebarBackground())
     }
 
-    /// A short reason when a page has something that stops a feature from
-    /// working (shown as a dot in the sidebar), or nil.
+    /// A short reason when a page has something that stops recording or
+    /// transcription from working (shown as a dot in the sidebar), or nil.
+    /// Optional extras, like Claude naming without a key, don't get a dot:
+    /// a fresh install would otherwise open with one.
     private func attentionNote(_ s: Section) -> String? {
         let settings = model.settings
         switch s {
         case .transcription where settings.engine == .soniox && !settings.hasSonioxKey:
             return "Soniox needs an API key."
-        case .speakers where settings.claudeNaming && !settings.hasAnthropicKey:
-            return "Suggesting names with Claude needs an Anthropic API key."
         case .permissions where !MicCapture.permissionGranted:
             return "Microphone access is off."
         default:
