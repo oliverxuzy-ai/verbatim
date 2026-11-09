@@ -34,9 +34,9 @@ final class WindowManager: NSObject, NSWindowDelegate {
         if settings == nil {
             settings = makeWindow(
                 title: "Settings",
-                size: NSSize(width: 640, height: 560),
-                minSize: NSSize(width: 560, height: 440),
-                autosave: "VerbatimSettings",
+                size: NSSize(width: 740, height: 620),
+                minSize: NSSize(width: 640, height: 480),
+                autosave: "VerbatimSettingsWide",
                 content: SettingsView(model: model)
             )
             settings?.titlebarAppearsTransparent = true

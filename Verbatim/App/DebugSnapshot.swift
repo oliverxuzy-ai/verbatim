@@ -96,6 +96,33 @@ enum DebugSnapshot {
         }
     }
 
+    /// `--snapshot-settings <dir>`: every Settings page, light and dark, as
+    /// `settings-<page>-<appearance>.png`, then quits.
+    static func runSettings(outputDir: URL) {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("verbatim-snapshot-\(UUID().uuidString)")
+        let model = AppModel(storeRoot: root)
+        model.windows.model = model
+        model.panel.model = model
+        try? FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
+        Task { @MainActor in
+            for (appearance, suffix) in [(NSAppearance(named: .aqua), "light"), (NSAppearance(named: .darkAqua), "dark")] {
+                NSApp.appearance = appearance
+                // Offscreen copies: capturing the titled Settings window from
+                // inside the app leaves the scrolling pane blank.
+                for section in SettingsView.Section.allCases {
+                    model.settingsSection = section
+                    let window = offscreen(SettingsView(model: model).background(Theme.bg).frame(height: 860), width: 760)
+                    try? await Task.sleep(for: .seconds(1))
+                    let name = section.rawValue.lowercased().replacingOccurrences(of: " ", with: "-")
+                    save(window, to: outputDir.appendingPathComponent("settings-\(name)-\(suffix).png"))
+                    window.close()
+                }
+            }
+            try? FileManager.default.removeItem(at: root)
+            exit(0)
+        }
+    }
+
     /// `--demo-session`: a fake live recording (moving levels, menu bar label,
     /// capsule) with no capture or permissions, for profiling the UI.
     static func runDemoSession(model: AppModel) {
