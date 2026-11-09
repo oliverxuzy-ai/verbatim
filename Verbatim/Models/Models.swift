@@ -132,6 +132,8 @@ nonisolated struct Recording: Codable, Identifiable, Sendable, Hashable {
     var segments: [Segment] = []
     var notionPageURL: URL?
     var exportedAt: Date?
+    /// The Lark / Feishu doc this recording was exported to.
+    var larkDocURL: URL?
     var refinedAt: Date?
     /// How each non-me speaker's name was decided: "user", "voiceprint",
     /// "calendar", "llm". Keyed by speaker ID.

@@ -150,6 +150,107 @@ struct NetworkFlowTests {
         }
     }
 
+    @Test func larkExportCreatesDocWritesBlocksInBatchesAndHandsOver() async throws {
+        let docID = "doxcnTest123"
+        let throttled = Locked(false)
+        let responder: @Sendable (StubURLProtocol.Captured) -> (Int, Data, [String: String]) = { req in
+            let route = "\(req.method) \(req.url.path)"
+            switch route {
+            case "POST /open-apis/auth/v3/tenant_access_token/internal":
+                return (200, json(["code": 0, "msg": "ok", "tenant_access_token": "t-test", "expire": 7200]), [:])
+            case "POST /open-apis/docx/v1/documents":
+                return (200, json(["code": 0, "data": ["document": ["document_id": docID, "revision_id": 1]]]), [:])
+            case "POST /open-apis/docx/v1/documents/\(docID)/blocks/\(docID)/children":
+                let first = throttled.withLock { t -> Bool in defer { t = true }; return !t }
+                return first ? (429, json(["code": 99991400, "msg": "request trigger frequency limit"]), ["x-ogw-ratelimit-reset": "0"])
+                    : (200, json(["code": 0, "data": ["children": [Any]()]]), [:])
+            case "POST /open-apis/drive/v1/permissions/\(docID)/members/transfer_owner":
+                return (200, json(["code": 0, "data": [String: Any]()]), [:])
+            case "POST /open-apis/drive/v1/metas/batch_query":
+                return (200, json(["code": 0, "data": ["metas": [["doc_token": docID, "url": "https://acme.larksuite.com/docx/\(docID)"]]]]), [:])
+            default:
+                return (404, json(["code": 404, "msg": "unexpected \(route)"]), [:])
+            }
+        }
+        StubURLProtocol.install(responder)
+        defer { StubURLProtocol.uninstall() }
+
+        let client = LarkClient(region: .lark, appID: "cli_test", appSecret: "secret")
+        let exporter = LarkExporter(client: client, folder: "https://acme.larksuite.com/drive/folder/fldTest9?from=x",
+                                    ownerEmail: "oliver@example.com", writeSpacing: .zero)
+        let result = try await exporter.export(longRecording(segments: 250))
+        #expect(result.url.absoluteString == "https://acme.larksuite.com/docx/\(docID)")
+        #expect(result.warning == nil)
+
+        let calls = StubURLProtocol.log.current
+        #expect(calls.allSatisfy { $0.url.host == "open.larksuite.com" })
+        let auth = try #require(calls.first)
+        #expect(parse(auth.body)["app_id"] as? String == "cli_test")
+        #expect(calls.dropFirst().allSatisfy { $0.headers["Authorization"] == "Bearer t-test" })
+
+        let create = try #require(calls.first { $0.url.path == "/open-apis/docx/v1/documents" })
+        #expect(parse(create.body)["folder_token"] as? String == "fldTest9")
+        #expect(parse(create.body)["title"] as? String == "1on1 with Hsiao")
+
+        let writes = calls.filter { $0.url.path.hasSuffix("/children") }
+        #expect(writes.allSatisfy { $0.url.query?.contains("document_revision_id=-1") == true })
+        // First write was rate limited and retried; 7 skeleton blocks + 250 turns.
+        let sizes = writes.map { (parse($0.body)["children"] as? [Any])?.count ?? 0 }
+        #expect(sizes == [50, 50, 50, 50, 50, 50, 7])
+
+        let transfer = try #require(calls.first { $0.url.path.hasSuffix("/transfer_owner") })
+        #expect(transfer.url.query?.contains("type=docx") == true)
+        #expect(transfer.url.query?.contains("stay_put=false") == true)
+        #expect(parse(transfer.body)["member_id"] as? String == "oliver@example.com")
+        #expect(parse(transfer.body)["member_type"] as? String == "email")
+    }
+
+    @Test func larkFallsBackToSharingWhenOwnershipTransferFails() async throws {
+        let docID = "doxcnFallback"
+        StubURLProtocol.install { req in
+            switch "\(req.method) \(req.url.path)" {
+            case "POST /open-apis/auth/v3/tenant_access_token/internal":
+                return (200, json(["code": 0, "tenant_access_token": "t-test"]), [:])
+            case "POST /open-apis/docx/v1/documents":
+                return (200, json(["code": 0, "data": ["document": ["document_id": docID]]]), [:])
+            case "POST /open-apis/drive/v1/permissions/\(docID)/members/transfer_owner":
+                return (400, json(["code": 1063001, "msg": "invalid parameter"]), [:])
+            case "POST /open-apis/drive/v1/permissions/\(docID)/members":
+                return (200, json(["code": 0, "data": ["member": [String: Any]()]]), [:])
+            case "POST /open-apis/drive/v1/metas/batch_query":
+                return (400, json(["code": 99991672, "msg": "no scope"]), [:])
+            default:
+                return (200, json(["code": 0, "data": [String: Any]()]), [:])
+            }
+        }
+        defer { StubURLProtocol.uninstall() }
+
+        let client = LarkClient(region: .feishu, appID: "cli_test", appSecret: "secret")
+        let exporter = LarkExporter(client: client, ownerEmail: "oliver@example.com", writeSpacing: .zero)
+        let result = try await exporter.export(longRecording(segments: 3))
+        #expect(result.warning == nil)
+        // No URL from the API: the generic Feishu link.
+        #expect(result.url.absoluteString == "https://www.feishu.cn/docx/\(docID)")
+
+        let calls = StubURLProtocol.log.current
+        #expect(calls.allSatisfy { $0.url.host == "open.feishu.cn" })
+        #expect(parse(try #require(calls.first { $0.url.path == "/open-apis/docx/v1/documents" }).body)["folder_token"] == nil)
+        let share = try #require(calls.first { $0.url.path == "/open-apis/drive/v1/permissions/\(docID)/members" })
+        #expect(parse(share.body)["perm"] as? String == "full_access")
+    }
+
+    @Test func larkNeedsSomewhereToPutTheDoc() async throws {
+        StubURLProtocol.install { _ in (500, Data(), [:]) }
+        defer { StubURLProtocol.uninstall() }
+        let exporter = LarkExporter(client: LarkClient(region: .lark, appID: "cli_test", appSecret: "secret"))
+        do {
+            _ = try await exporter.export(longRecording(segments: 2))
+            Issue.record("expected an error")
+        } catch LarkError.noDestination {
+            #expect(StubURLProtocol.log.current.isEmpty)
+        }
+    }
+
     @Test func claudeNamingSendsStructuredRequestAndParsesReply() async throws {
         StubURLProtocol.install { req in
             let reply: [String: Any] = [

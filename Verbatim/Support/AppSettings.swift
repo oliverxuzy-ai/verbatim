@@ -56,6 +56,11 @@ final class AppSettings {
     var notionDataSourceID: String { didSet { save("notionDataSourceID", notionDataSourceID) } }
     var notionSourceOption: String { didSet { save("notionSourceOption", notionSourceOption) } }
     var autoExportOnStop: Bool { didSet { save("autoExportOnStop", autoExportOnStop) } }
+    var larkRegion: LarkRegion { didSet { save("larkRegion", larkRegion.rawValue) } }
+    var larkAppID: String { didSet { save("larkAppID", larkAppID) } }
+    var larkFolder: String { didSet { save("larkFolder", larkFolder) } }
+    var larkOwnerEmail: String { didSet { save("larkOwnerEmail", larkOwnerEmail) } }
+    var larkAutoExport: Bool { didSet { save("larkAutoExport", larkAutoExport) } }
     var autoRefine: Bool { didSet { save("autoRefine", autoRefine) } }
     var meetingReminders: Bool { didSet { save("meetingReminders", meetingReminders) } }
     var autoStartVideoMeetings: Bool { didSet { save("autoStartVideoMeetings", autoStartVideoMeetings) } }
@@ -68,6 +73,7 @@ final class AppSettings {
 
     // Secrets live in a private file (see Keychain); these only say whether one is set.
     private(set) var hasNotionToken: Bool
+    private(set) var hasLarkSecret: Bool
     private(set) var hasSonioxKey: Bool
     private(set) var hasAnthropicKey: Bool
 
@@ -82,6 +88,11 @@ final class AppSettings {
         notionDataSourceID = d.string(forKey: "notionDataSourceID") ?? AppSettings.defaultNotionDataSource
         notionSourceOption = d.string(forKey: "notionSourceOption") ?? "Verbatim"
         autoExportOnStop = d.object(forKey: "autoExportOnStop") as? Bool ?? false
+        larkRegion = LarkRegion(rawValue: d.string(forKey: "larkRegion") ?? "") ?? .lark
+        larkAppID = d.string(forKey: "larkAppID") ?? ""
+        larkFolder = d.string(forKey: "larkFolder") ?? ""
+        larkOwnerEmail = d.string(forKey: "larkOwnerEmail") ?? ""
+        larkAutoExport = d.object(forKey: "larkAutoExport") as? Bool ?? false
         autoRefine = d.object(forKey: "autoRefine") as? Bool ?? true
         meetingReminders = d.object(forKey: "meetingReminders") as? Bool ?? true
         autoStartVideoMeetings = d.object(forKey: "autoStartVideoMeetings") as? Bool ?? false
@@ -92,6 +103,7 @@ final class AppSettings {
         hiddenCalendarIDs = d.stringArray(forKey: "hiddenCalendarIDs") ?? []
         hasCompletedOnboarding = d.bool(forKey: "hasCompletedOnboarding")
         hasNotionToken = Keychain.get(SecretKey.notionToken) != nil
+        hasLarkSecret = Keychain.get(SecretKey.larkAppSecret) != nil
         hasSonioxKey = Keychain.get(SecretKey.sonioxKey) != nil
         hasAnthropicKey = Keychain.get(SecretKey.anthropicKey) != nil
     }
@@ -105,6 +117,21 @@ final class AppSettings {
     func setNotionToken(_ token: String?) {
         Keychain.set(token?.trimmed, for: SecretKey.notionToken)
         hasNotionToken = Keychain.get(SecretKey.notionToken) != nil
+        hasLarkSecret = Keychain.get(SecretKey.larkAppSecret) != nil
+    }
+
+    func setLarkAppSecret(_ secret: String?) {
+        Keychain.set(secret?.trimmed, for: SecretKey.larkAppSecret)
+        hasLarkSecret = Keychain.get(SecretKey.larkAppSecret) != nil
+    }
+
+    /// App ID and secret are both set.
+    var hasLarkCredentials: Bool { hasLarkSecret && !larkAppID.trimmed.isEmpty }
+
+    /// A client for the saved Lark app, or nil until it is set up.
+    var larkClient: LarkClient? {
+        guard let secret = Keychain.get(SecretKey.larkAppSecret), !larkAppID.trimmed.isEmpty else { return nil }
+        return LarkClient(region: larkRegion, appID: larkAppID.trimmed, appSecret: secret)
     }
 
     func setSonioxKey(_ key: String?) {

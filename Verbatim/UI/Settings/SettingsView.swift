@@ -13,6 +13,7 @@ struct SettingsView: View {
         case general = "General"
         case transcription = "Transcription"
         case notion = "Notion"
+        case lark = "Lark"
         case calendar = "Calendar"
         case permissions = "Permissions"
 
@@ -22,6 +23,7 @@ struct SettingsView: View {
             case .general: "slider.horizontal.3"
             case .transcription: "waveform"
             case .notion: "doc.text"
+            case .lark: "paperplane"
             case .calendar: "calendar"
             case .permissions: "lock.shield"
             }
@@ -62,6 +64,7 @@ struct SettingsView: View {
                     case .general: GeneralSettings(model: model)
                     case .transcription: TranscriptionSettings(model: model)
                     case .notion: NotionSettings(model: model)
+                    case .lark: LarkSettings(model: model)
                     case .calendar: CalendarSettings(model: model)
                     case .permissions: PermissionSettings(model: model)
                     }
@@ -413,6 +416,76 @@ private struct NotionSettings: View {
                                 NotionExporter.Prop.status, NotionExporter.Prop.external]
                 let missing = expected.filter { schema[$0] == nil }
                 testResult = "Connected to \u{201C}\(title)\u{201D}" + (missing.isEmpty ? ". All properties found." : ". Missing: \(missing.joined(separator: ", ")).")
+            } catch {
+                testResult = error.localizedDescription
+            }
+            testing = false
+        }
+    }
+}
+
+private struct LarkSettings: View {
+    let model: AppModel
+    @State private var testResult: String?
+    @State private var testing = false
+
+    var body: some View {
+        @Bindable var settings = model.settings
+        SettingsGroup(title: "Connection", footnote: "Create a custom app in the Lark developer console, add the docx:document and drive:drive permissions, publish a version, then paste its App ID and App Secret from Credentials & Basic Info.") {
+            SettingsRow(title: "Region") {
+                Picker("", selection: $settings.larkRegion) {
+                    ForEach(LarkRegion.allCases) { Text($0.label).tag($0) }
+                }
+                .labelsHidden().frame(width: 220)
+            }
+            SettingsRow(title: "App ID") {
+                TextField("cli_…", text: $settings.larkAppID)
+                    .textFieldStyle(.roundedBorder).frame(width: 230).font(Theme.monoFont)
+            }
+            SettingsRow(title: "App Secret") {
+                SecretField(placeholder: "App Secret", isSet: settings.hasLarkSecret) { settings.setLarkAppSecret($0) }
+            }
+            SettingsRow(title: "Developer console", detail: "Where the app, its permissions and credentials live.") {
+                Button("Open") { NSWorkspace.shared.open(settings.larkRegion.consoleURL) }.buttonStyle(.v(.secondary, .small))
+            }
+            SettingsRow(title: "Test connection", detail: testResult, showDivider: false) {
+                Button {
+                    test()
+                } label: {
+                    if testing { ProgressView().controlSize(.small) } else { Text("Test") }
+                }
+                .buttonStyle(.v(.secondary, .small))
+                .disabled(!settings.hasLarkCredentials || testing)
+            }
+        }
+        SettingsGroup(title: "Where docs go", footnote: "The app creates each doc. With your email set, Verbatim makes you the owner, which moves the doc into your own space. A folder is optional: share it with the app first (folder ••• → Share → add the app).") {
+            SettingsRow(title: "Your Lark email", detail: "The account that should own the exported docs.") {
+                TextField("you@company.com", text: $settings.larkOwnerEmail)
+                    .textFieldStyle(.roundedBorder).frame(width: 230)
+            }
+            SettingsRow(title: "Folder", detail: "Optional. Paste a folder link.", showDivider: false) {
+                TextField("https://…/drive/folder/…", text: $settings.larkFolder)
+                    .textFieldStyle(.roundedBorder).frame(width: 230).font(Theme.monoFont)
+            }
+        }
+        SettingsGroup(title: "Export") {
+            SettingsRow(title: "Export automatically when a meeting ends", showDivider: false) {
+                Toggle("", isOn: $settings.larkAutoExport).labelsHidden().toggleStyle(.switch)
+            }
+        }
+    }
+
+    private func test() {
+        guard let client = model.settings.larkClient else { return }
+        testing = true
+        testResult = nil
+        let folder = model.settings.larkFolder
+        let hasEmail = !model.settings.larkOwnerEmail.trimmed.isEmpty
+        Task {
+            do {
+                let result = try await client.check(folder: folder)
+                let hint = hasEmail || !LarkClient.folderToken(folder).isEmpty ? "" : " Add your email so exported docs are shared with you."
+                testResult = result + hint
             } catch {
                 testResult = error.localizedDescription
             }

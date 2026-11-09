@@ -56,6 +56,7 @@ Verbatim combines several signals and only suggests a name when the evidence is 
 
 ### Calendar and export
 - **Google Calendar** sign-in, direct (no macOS Calendar needed): meetings, attendees and Meet / Zoom links.
+- **Export to Lark / Feishu**: the same transcript as a new Lark doc, owned by you.
 - **One-click export to Notion**: a new page with title, date and time range, duration, attendees, meeting link and the full transcript (`[00:12:34] Name: text`) in a toggle, plus empty headings for your own notes.
 - **Copy** the whole transcript with timestamps and speakers.
 - **⌘K command bar** searches every transcript by title, speaker and content.
@@ -137,6 +138,17 @@ Any database works: Verbatim fills the title column and the transcript, and fill
 </details>
 
 <details>
+<summary><b>Lark / Feishu (飞书)</b></summary>
+
+1. In the developer console ([Lark](https://open.larksuite.com/app) or [Feishu](https://open.feishu.cn/app)), create a **custom app**.
+2. Under **Permissions & Scopes**, add `docx:document` and `drive:drive`, then create and publish a version (your workspace admin may need to approve it).
+3. In **Settings → Lark**, choose the region and paste the **App ID** and **App Secret**, then click **Test**.
+4. Enter your Lark email. The app creates each doc and makes you its owner, so it lands in your own space. Optionally paste a folder link (share the folder with the app first).
+
+Each export is a new doc with the date, duration, attendees and meeting link, empty `摘要` / `讨论要点` headings for your notes, and the full transcript.
+</details>
+
+<details>
 <summary><b>Claude speaker naming</b></summary>
 
 Paste an Anthropic API key in **Settings → Transcription → Speaker names** to let Claude suggest names from the conversation for voices that the other signals could not name. Only the transcript text is sent, and suggestions always need your confirmation.
@@ -149,7 +161,7 @@ Paste an Anthropic API key in **Settings → Transcription → Speaker names** t
 | Audio and transcripts | Stay on your Mac in `~/Library/Application Support/Verbatim/Recordings/<id>/` (`recording.json`, plus 16 kHz lossless `mic.m4a` and `system.m4a`). |
 | API keys and tokens | A user-only file, `~/Library/Application Support/Verbatim/secrets.json` (mode 0600). |
 | Calendar | Read directly from Google with your own OAuth client. |
-| Network | Only when you use it: Soniox (if chosen as engine), Notion (on export), Anthropic (if you add a key), and one-time model downloads. Plus a check of GitHub's latest release every few hours, unless you turn off automatic updates. |
+| Network | Only when you use it: Soniox (if chosen as engine), Notion or Lark (on export), Anthropic (if you add a key), and one-time model downloads. Plus a check of GitHub's latest release every few hours, unless you turn off automatic updates. |
 
 ## How it works
 

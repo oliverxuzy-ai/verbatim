@@ -8,6 +8,7 @@ nonisolated enum Log {
     static let asr = Logger(subsystem: "dev.verbatim.app", category: "asr")
     static let calendar = Logger(subsystem: "dev.verbatim.app", category: "calendar")
     static let notion = Logger(subsystem: "dev.verbatim.app", category: "notion")
+    static let lark = Logger(subsystem: "dev.verbatim.app", category: "lark")
 }
 
 /// API secrets in a private file (~/Library/Application Support/Verbatim/
@@ -54,6 +55,7 @@ nonisolated enum Keychain {
 
 nonisolated enum SecretKey {
     static let notionToken = "notion.token"
+    static let larkAppSecret = "lark.appSecret"
     static let sonioxKey = "soniox.apiKey"
     static let anthropicKey = "anthropic.apiKey"
     static let googleClientID = "google.clientID"

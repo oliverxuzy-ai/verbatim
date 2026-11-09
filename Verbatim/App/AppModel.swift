@@ -29,6 +29,7 @@ final class AppModel {
     var selectedRecordingID: UUID?
     var settingsSection: SettingsView.Section = .transcription
     private(set) var exportStates: [UUID: ExportState] = [:]
+    private(set) var larkExportStates: [UUID: ExportState] = [:]
     private(set) var refineStates: [UUID: RefineState] = [:]
     /// Re-entrancy guard for refine, separate from the displayed state
     /// (postProcess shows "running" before it calls refine). Holds the end
@@ -81,6 +82,7 @@ final class AppModel {
         guard session == nil, refining.isEmpty, calendar.current == nil, !NSApp.isActive else { return false }
         let busy = refineStates.values.contains { if case .running = $0 { true } else { false } }
             || exportStates.values.contains(.exporting)
+            || larkExportStates.values.contains(.exporting)
         return !busy
     }
 
@@ -259,14 +261,25 @@ final class AppModel {
             _ = try? await withTimeout(120) { await self.learnVoices(from: latest) }
         }
         if continuedSince(id, endedAt: endedAt) { return }
-        guard allowsCloud, settings.autoExportOnStop, settings.hasNotionToken else { return }
-        if recording.notionPageURL == nil {
-            await export(id)
-        } else {
-            // Continued after it was exported: don't add a second page on
-            // its own; offer to export the whole meeting again.
-            toasts.show(.info, "Notion has the earlier part only", detail: recording.meeting.title, actionTitle: "Export again") { [weak self] in
-                Task { await self?.export(id) }
+        guard allowsCloud else { return }
+        if settings.autoExportOnStop, settings.hasNotionToken {
+            if recording.notionPageURL == nil {
+                await export(id)
+            } else {
+                // Continued after it was exported: don't add a second page on
+                // its own; offer to export the whole meeting again.
+                toasts.show(.info, "Notion has the earlier part only", detail: recording.meeting.title, actionTitle: "Export again") { [weak self] in
+                    Task { await self?.export(id) }
+                }
+            }
+        }
+        if settings.larkAutoExport, settings.hasLarkCredentials {
+            if recording.larkDocURL == nil {
+                await exportToLark(id)
+            } else {
+                toasts.show(.info, "Lark has the earlier part only", detail: recording.meeting.title, actionTitle: "Export again") { [weak self] in
+                    Task { await self?.exportToLark(id) }
+                }
             }
         }
     }
@@ -394,6 +407,7 @@ final class AppModel {
             if let latest = store.recording(id) {
                 refined.meeting = latest.meeting
                 refined.notionPageURL = latest.notionPageURL
+                refined.larkDocURL = latest.larkDocURL
                 refined.exportedAt = latest.exportedAt
             }
             store.save(refined)
@@ -514,6 +528,47 @@ final class AppModel {
             exportStates[id] = .failed(error.localizedDescription)
             toasts.show(.failure, "Couldn't save to Notion", detail: error.localizedDescription, actionTitle: "Retry") { [weak self] in
                 Task { await self?.export(id) }
+            }
+        }
+    }
+
+    // MARK: Lark
+
+    func larkExportState(_ id: UUID) -> ExportState {
+        if let s = larkExportStates[id] { return s }
+        if let url = store.recording(id)?.larkDocURL { return .done(url) }
+        return .idle
+    }
+
+    func exportToLark(_ id: UUID) async {
+        guard let recording = store.recording(id) else { return }
+        guard let client = settings.larkClient else {
+            larkExportStates[id] = .failed(LarkError.missingCredentials.localizedDescription)
+            return
+        }
+        guard larkExportStates[id] != .exporting else { return }
+        larkExportStates[id] = .exporting
+        let exporter = LarkExporter(client: client, folder: settings.larkFolder, ownerEmail: settings.larkOwnerEmail)
+        do {
+            let result = try await exporter.export(recording)
+            var updated = store.recording(id) ?? recording
+            updated.larkDocURL = result.url
+            store.save(updated)
+            larkExportStates[id] = .done(result.url)
+            if let warning = result.warning {
+                toasts.show(.info, "Saved to Lark, not shared", detail: warning, actionTitle: "Open") {
+                    NSWorkspace.shared.open(result.url)
+                }
+            } else {
+                toasts.show(.success, "Saved to Lark", detail: recording.meeting.title, actionTitle: "Open") {
+                    NSWorkspace.shared.open(result.url)
+                }
+            }
+        } catch {
+            Log.lark.error("Export failed: \(error.localizedDescription)")
+            larkExportStates[id] = .failed(error.localizedDescription)
+            toasts.show(.failure, "Couldn't save to Lark", detail: error.localizedDescription, actionTitle: "Retry") { [weak self] in
+                Task { await self?.exportToLark(id) }
             }
         }
     }
