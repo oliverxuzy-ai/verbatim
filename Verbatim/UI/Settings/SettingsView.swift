@@ -218,7 +218,7 @@ struct SettingsRow<Trailing: View>: View {
                     }
                 }
                 Spacer(minLength: 12)
-                trailing
+                trailing.layoutPriority(1) // the description wraps, the controls don't squeeze
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
@@ -293,6 +293,7 @@ struct SecretField: View {
                     .frame(width: 210)
                     .onSubmit(save)
                 Button("Save", action: save).buttonStyle(.v(.primary, .small)).disabled(draft.trimmed.isEmpty)
+                    .fixedSize()
             }
         }
     }
