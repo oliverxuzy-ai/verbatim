@@ -107,13 +107,15 @@ enum DebugSnapshot {
         Task { @MainActor in
             for (appearance, suffix) in [(NSAppearance(named: .aqua), "light"), (NSAppearance(named: .darkAqua), "dark")] {
                 NSApp.appearance = appearance
+                // Offscreen copies: capturing the titled Settings window from
+                // inside the app leaves the scrolling pane blank.
                 for section in SettingsView.Section.allCases {
-                    model.windows.showSettings(section: section)
-                    guard let window = NSApp.windows.first(where: { $0.title == "Settings" }) else { continue }
-                    window.setContentSize(NSSize(width: 760, height: 860))
+                    model.settingsSection = section
+                    let window = offscreen(SettingsView(model: model).background(Theme.bg).frame(height: 860), width: 760)
                     try? await Task.sleep(for: .seconds(1))
                     let name = section.rawValue.lowercased().replacingOccurrences(of: " ", with: "-")
                     save(window, to: outputDir.appendingPathComponent("settings-\(name)-\(suffix).png"))
+                    window.close()
                 }
             }
             try? FileManager.default.removeItem(at: root)
