@@ -76,6 +76,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DebugSnapshot.run(outputDir: URL(fileURLWithPath: CommandLine.arguments[i + 1]))
             return
         }
+        if let i = CommandLine.arguments.firstIndex(of: "--snapshot-settings"), i + 1 < CommandLine.arguments.count {
+            DebugSnapshot.runSettings(outputDir: URL(fileURLWithPath: CommandLine.arguments[i + 1]))
+            return
+        }
         if CommandLine.arguments.contains("--demo-session") {
             model.windows.model = model
             model.panel.model = model

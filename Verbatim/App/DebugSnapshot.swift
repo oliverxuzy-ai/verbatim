@@ -96,6 +96,31 @@ enum DebugSnapshot {
         }
     }
 
+    /// `--snapshot-settings <dir>`: every Settings page, light and dark, as
+    /// `settings-<page>-<appearance>.png`, then quits.
+    static func runSettings(outputDir: URL) {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("verbatim-snapshot-\(UUID().uuidString)")
+        let model = AppModel(storeRoot: root)
+        model.windows.model = model
+        model.panel.model = model
+        try? FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
+        Task { @MainActor in
+            for (appearance, suffix) in [(NSAppearance(named: .aqua), "light"), (NSAppearance(named: .darkAqua), "dark")] {
+                NSApp.appearance = appearance
+                for section in SettingsView.Section.allCases {
+                    model.windows.showSettings(section: section)
+                    guard let window = NSApp.windows.first(where: { $0.title == "Settings" }) else { continue }
+                    window.setContentSize(NSSize(width: 760, height: 860))
+                    try? await Task.sleep(for: .seconds(1))
+                    let name = section.rawValue.lowercased().replacingOccurrences(of: " ", with: "-")
+                    save(window, to: outputDir.appendingPathComponent("settings-\(name)-\(suffix).png"))
+                }
+            }
+            try? FileManager.default.removeItem(at: root)
+            exit(0)
+        }
+    }
+
     /// `--demo-session`: a fake live recording (moving levels, menu bar label,
     /// capsule) with no capture or permissions, for profiling the UI.
     static func runDemoSession(model: AppModel) {
