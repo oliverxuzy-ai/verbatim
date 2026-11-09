@@ -4,6 +4,15 @@ Notable changes to Verbatim. Each release ships as a DMG on the
 [Releases](https://github.com/oliverxuzy-ai/verbatim/releases) page; the full
 release notes (in Chinese) are in [`release-notes/`](release-notes/).
 
+## [Unreleased]
+
+### Added
+- Export to Lark / Feishu (飞书). Settings → Lark takes a custom app's ID and
+  secret; each export creates a new doc with the meeting details, empty
+  摘要 / 讨论要点 headings and the full transcript, then makes you its owner
+  so it shows up in your own space. Can also export automatically when a
+  meeting ends.
+
 ## [0.6.0] - 2026-11-06
 
 ### Added

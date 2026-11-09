@@ -141,6 +141,53 @@ struct NotionExporterTests {
     }
 }
 
+struct LarkExporterTests {
+    func elementTexts(_ block: [String: Any], key: String) -> [String] {
+        let elements = (block[key] as? [String: Any])?["elements"] as? [[String: Any]] ?? []
+        return elements.compactMap { ($0["text_run"] as? [String: Any])?["content"] as? String }
+    }
+
+    @Test func folderTokenFromLinkOrBareToken() {
+        #expect(LarkClient.folderToken("https://acme.feishu.cn/drive/folder/fldcnAbC123xyz?from=space") == "fldcnAbC123xyz")
+        #expect(LarkClient.folderToken("https://acme.larksuite.com/drive/folder/Nf2xYZ987/") == "Nf2xYZ987")
+        #expect(LarkClient.folderToken("  fldcnAbC123xyz ") == "fldcnAbC123xyz")
+        #expect(LarkClient.folderToken("") == "")
+    }
+
+    @Test func documentHasHeaderSectionsAndTranscript() {
+        let blocks = LarkExporter.blocks(for: NotionExporterTests().sampleRecording())
+        let headings = blocks.filter { $0["block_type"] as? Int == 4 }.flatMap { elementTexts($0, key: "heading2") }
+        #expect(headings == ["摘要", "讨论要点", "逐字稿 Transcript"])
+
+        let header = elementTexts(blocks[0], key: "text").joined()
+        #expect(header.contains("Hsiao-Wen Lin"))
+        #expect(header.contains("Meeting link"))
+
+        // Echo line hidden; one paragraph per turn after the transcript heading.
+        let transcript = Array(blocks.drop { !(($0["block_type"] as? Int == 4) && elementTexts($0, key: "heading2") == ["逐字稿 Transcript"]) }.dropFirst())
+        #expect(transcript.count == 2)
+        #expect(elementTexts(transcript[1], key: "text") == ["00:00:07  ", "Oliver: ", "The first thing is the semantic layer."])
+        let style = ((transcript[1]["text"] as? [String: Any])?["elements"] as? [[String: Any]])?[1]["text_run"] as? [String: Any]
+        #expect((style?["text_element_style"] as? [String: Any])?["bold"] as? Bool == true)
+    }
+
+    @Test func meetingLinkIsPercentEncoded() throws {
+        let header = LarkExporter.header(for: NotionExporterTests().sampleRecording())
+        let elements = try #require((header["text"] as? [String: Any])?["elements"] as? [[String: Any]])
+        let link = elements.compactMap { (($0["text_run"] as? [String: Any])?["text_element_style"] as? [String: Any])?["link"] as? [String: String] }.first
+        #expect(link?["url"] == "https%3A%2F%2Fmeet.google.com%2Fabc-defg-hij")
+    }
+
+    @Test func mapsErrorCodes() {
+        if case .missingScope = LarkClient.error(status: 400, code: 99991672, message: "x") {} else { Issue.record("expected missingScope") }
+        if case .badCredentials = LarkClient.error(status: 200, code: 10014, message: "x") {} else { Issue.record("expected badCredentials") }
+        if case .forbidden = LarkClient.error(status: 403, code: 1063002, message: "x") {} else { Issue.record("expected forbidden") }
+        #expect(LarkClient.isRetryable(status: 429, code: 99991400))
+        #expect(LarkClient.isRetryable(status: 200, code: 99991400))
+        #expect(!LarkClient.isRetryable(status: 400, code: 1770001))
+    }
+}
+
 @MainActor
 struct LiveTranscriptTests {
     func makeTranscript(attendees: [Attendee] = []) -> LiveTranscript {

@@ -252,6 +252,9 @@ struct RecordingDetailView: View {
             }
             .buttonStyle(.vSecondary)
 
+            if model.settings.hasLarkCredentials || rec.larkDocURL != nil {
+                larkExportButton(rec)
+            }
             exportButton(rec)
 
             Menu {
@@ -268,6 +271,9 @@ struct RecordingDetailView: View {
                 }
                 if rec.notionPageURL != nil {
                     Button("Export to Notion again") { Task { await model.export(rec.id) } }
+                }
+                if rec.larkDocURL != nil, model.settings.hasLarkCredentials {
+                    Button("Export to Lark again") { Task { await model.exportToLark(rec.id) } }
                 }
                 Divider()
                 Button("Delete recording", role: .destructive) { model.deleteRecording(rec.id) }
@@ -310,6 +316,40 @@ struct RecordingDetailView: View {
                 Task { await model.export(rec.id) }
             } label: {
                 Label("Retry export", systemImage: "exclamationmark.triangle")
+            }
+            .buttonStyle(.vSecondary)
+            .help(message)
+            .popoverTip(message)
+        }
+    }
+
+    @ViewBuilder
+    private func larkExportButton(_ rec: Recording) -> some View {
+        switch model.larkExportState(rec.id) {
+        case .idle:
+            Button {
+                Task { await model.exportToLark(rec.id) }
+            } label: {
+                Label("Export to Lark", systemImage: "paperplane")
+            }
+            .buttonStyle(.vSecondary)
+            .help("Save the transcript as a new Lark doc")
+        case .exporting:
+            Button {} label: {
+                HStack(spacing: 6) { ProgressView().controlSize(.small); Text("Exporting…") }
+            }
+            .buttonStyle(.vSecondary)
+            .disabled(true)
+        case let .done(url):
+            Button { NSWorkspace.shared.open(url) } label: {
+                Label("Open in Lark", systemImage: "arrow.up.right.square")
+            }
+            .buttonStyle(.vSecondary)
+        case let .failed(message):
+            Button {
+                Task { await model.exportToLark(rec.id) }
+            } label: {
+                Label("Retry Lark", systemImage: "exclamationmark.triangle")
             }
             .buttonStyle(.vSecondary)
             .help(message)

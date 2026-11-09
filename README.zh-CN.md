@@ -55,6 +55,7 @@ macOS 菜单栏会议转写工具：实时转写、区分说话人、记住每�
 
 ### 日历与导出
 - **Google 日历**：直接登录，不经过 macOS 日历。读取会议、参会人和 Meet / Zoom 链接。
+- **导出到飞书 / Lark**：同样的逐字稿存成一篇飞书文档，所有者是你。
 - **一键导出 Notion**：新建一页，填好标题、起止时间、时长、参会人、会议链接，逐字稿（`[00:12:34] 姓名: 内容`）放在折叠块里，另留空标题给你写笔记。
 - **复制**整份逐字稿（带时间戳和说话人）。
 - **⌘K 命令栏**：按标题、说话人、内容搜索所有转写。
@@ -133,6 +134,17 @@ Verbatim 用你自己的 OAuth 客户端连接 Google 日历，日历数据不�
 </details>
 
 <details>
+<summary><b>Lark / 飞书</b></summary>
+
+1. 在开发者后台（[飞书](https://open.feishu.cn/app) 或 [Lark](https://open.larksuite.com/app)）创建一个**企业自建应用**。
+2. 在「权限管理」里开通 `docx:document` 和 `drive:drive`，然后创建版本并发布（可能需要管理员审批）。
+3. 在「设置 → Lark」选好区域，粘贴 **App ID** 和 **App Secret**，点 Test 检查。
+4. 填上你的飞书 / Lark 邮箱。文档由应用创建，再把所有者转给你，所以会出现在你自己的空间里。也可以填一个文件夹链接（先把文件夹共享给这个应用）。
+
+每次导出都是一篇新文档：日期、时长、参会人、会议链接，留空的「摘要」「讨论要点」，以及完整逐字稿。
+</details>
+
+<details>
 <summary><b>用 Claude 推断说话人</b></summary>
 
 在「设置 → Transcription → Speaker names」填入 Anthropic API key 后，其他线索认不出的声音会让 Claude 根据对话内容建议姓名。只发送转写文字，建议始终需要你确认。
@@ -145,7 +157,7 @@ Verbatim 用你自己的 OAuth 客户端连接 Google 日历，日历数据不�
 | 音频和逐字稿 | 只在你的 Mac 上：`~/Library/Application Support/Verbatim/Recordings/<id>/`（`recording.json`，以及 16 kHz 无损的 `mic.m4a`、`system.m4a`）。 |
 | API key 和 token | 仅当前用户可读的文件 `~/Library/Application Support/Verbatim/secrets.json`（权限 0600）。 |
 | 日历 | 用你自己的 OAuth 客户端直接从 Google 读取。 |
-| 网络 | 只在你用到时：Soniox（选它当引擎时）、Notion（导出时）、Anthropic（填了 key 时），以及一次性的模型下载。另外每隔几小时查一次 GitHub 上的最新版本（关掉自动更新就不查）。 |
+| 网络 | 只在你用到时：Soniox（选它当引擎时）、Notion 或飞书（导出时）、Anthropic（填了 key 时），以及一次性的模型下载。另外每隔几小时查一次 GitHub 上的最新版本（关掉自动更新就不查）。 |
 
 ## 工作原理
 
